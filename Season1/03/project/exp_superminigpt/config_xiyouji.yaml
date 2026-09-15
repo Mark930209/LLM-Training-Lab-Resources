@@ -1,0 +1,24 @@
+# 03 篇 SuperMiniGPT 西游记语料训练配置
+# 与 config.yaml（shakespeare）唯一区别是 experiment.corpus 与语料规模相关项
+# 模型架构（hidden/layers/heads）完全一致，体现"数据不同、框架相同"
+
+experiment:
+  name: superminigpt_xiyouji
+  corpus: xiyouji      # 关键：切换到西游记中文语料
+  seed: 42
+  steps: 3000
+  warmup_steps: 0
+  vocab_size: 0        # 由语料自动决定（中文 char-level，数千字）
+  hidden: 192
+  layers: 6
+  heads: 6
+  seq_len: 128         # 中文信息密度高，128 汉字 ≈ 英文更多语义
+  lr: 3.0e-4
+  eval_every: 200
+  log_every: 50
+  gen_tokens: 200
+
+hardware:
+  device: cuda
+  batch_size: 32       # vocab 变大后 lm_head 显存上升，8GB 卡下若 OOM 降到 16
+  num_workers: 2

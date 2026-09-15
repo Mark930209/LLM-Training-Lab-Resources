@@ -1,0 +1,8 @@
+{
+  "chapters": 100,
+  "total_chars": 723296,
+  "vocab_size": 4532,
+  "min_chapter_chars": 4857,
+  "max_chapter_chars": 9664,
+  "avg_chapter_chars": 7209
+}

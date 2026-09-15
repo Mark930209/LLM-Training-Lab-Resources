@@ -1,0 +1,22 @@
+# 03 篇 SuperMiniGPT 实验配置
+# experiment 段迁移时不变；hardware 段换机器只改这里
+
+experiment:
+  name: superminigpt
+  seed: 42
+  steps: 3000          # main 实验步数（8GB 卡约 10~15 分钟）
+  warmup_steps: 0
+  vocab_size: 0        # 由语料自动决定（Tiny Shakespeare char-level 约 65）
+  hidden: 192
+  layers: 6
+  heads: 6
+  seq_len: 128
+  lr: 3.0e-4
+  eval_every: 200      # 每 N 步跑一次验证集
+  log_every: 50        # 每 N 步记录一次训练 loss
+  gen_tokens: 400      # 采样生成的字符数
+
+hardware:
+  device: cuda         # 无 GPU 改 cpu（CPU 跑通验证用 steps=200）
+  batch_size: 32
+  num_workers: 2

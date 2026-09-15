@@ -1,0 +1,20 @@
+# 02 篇冒烟实验配置
+# 分两段：experiment 迁移时不变，hardware 换机器只改这里
+
+experiment:
+  name: smoke_train
+  seed: 42
+  steps: 200
+  warmup_steps: 10
+  vocab_size: 8192
+  hidden_size: 512
+  num_layers: 4
+  num_heads: 8
+  seq_len: 256
+  lr: 3.0e-4
+
+hardware:
+  device: cuda        # 迁移到无 GPU 机器时改 cpu
+  batch_size: 16      # 8GB 卡的稳妥值；24GB 卡可加大
+  dtype: fp32         # 混合精度实验在后续专题展开
+  num_workers: 0
