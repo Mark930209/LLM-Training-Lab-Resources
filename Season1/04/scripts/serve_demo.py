@@ -292,7 +292,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=7860)
+    ap.add_argument("--port", type=int, default=9981)
     ap.add_argument("--host", default="0.0.0.0")
     args = ap.parse_args()
     srv = ThreadingHTTPServer((args.host, args.port), Handler)

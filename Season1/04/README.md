@@ -17,7 +17,10 @@
 │   ├── build_corpus.py        # 四大名著语料库构建（抓取→清洗→繁转简→切分）
 │   ├── estimate_memory.py     # 显存账：启动前算"会不会 OOM"
 │   ├── diagnose_init.py       # 初始 loss 诊断（放大后 logits 尺度检查）
-│   ├── collect_samples.py     # 采集各模型对同一提示词的续写输出（demo 数据）
+│   ├── collect_samples.py     # 采集各模型对同一提示词的短样本（180 token）
+│   ├── collect_long_samples.py # 采集长样本（600 token），用于观察跨书/串书
+│   ├── eval_cross_book.py     # 跨书留出困惑度：每本书单独取中段算 loss
+│   ├── analyze_text_quality.py # 采样文本的客观指标（记忆率/结构标记/病句信号）
 │   ├── serve_demo.py          # 模型对比演示 WebUI（零依赖，只用标准库）
 │   ├── collect_data.sh        # 主实验采集（约 90 分钟）
 │   ├── collect_fill_gaps.sh   # 补齐 2×2 对照矩阵缺失格
@@ -52,13 +55,13 @@
 
 ```bash
 cd ~/llm-training-lab
-./.venv/bin/python scripts/serve_demo.py
-# 浏览器打开 http://localhost:7860
+./.venv/bin/python scripts/serve_demo.py --port 9981
+# 浏览器打开 http://localhost:9981
 ```
 
 只用 Python 标准库（`http.server`），不装 Gradio/Flask。默认加载四档模型
-（10M×小语料 / 10M×大语料 / 30M×大语料 / 100M×大语料），显存有限时
-按需加载、只缓存当前一个。
+（10M×小语料 / 10M×大语料 / 30M×大语料 / 100M×大语料），提示词可自由修改，
+回车即重新续写。四个模型全部缓存在显存（约 4.9GB），换提示词无需重载。
 
 ## 03 → 04：演示代码补了哪些工程件
 
@@ -82,9 +85,6 @@ cd ~/llm-training-lab
 
 **为什么选四大名著**：四部都是明清白话章回小说，与 03 篇西游记同源，风格统一；
 小语料是大语料的真子集，对照时只变"数据量"一个变量，归因干净。
-
-**为什么不用四书五经**：实测四书五经合计仅约 40 万字符（比 03 单书还少），
-且是文言，与 03 白话风格不统一。
 
 ## 快速使用（WSL2 内）
 
@@ -114,7 +114,12 @@ bash scripts/verify_resume.sh
 
 # 8. 采集演示数据 + 启动 WebUI
 ./.venv/bin/python scripts/collect_samples.py
-./.venv/bin/python scripts/serve_demo.py
+./.venv/bin/python scripts/serve_demo.py --port 9981
+
+# 9. 质量对照实验（文章 §8）
+./.venv/bin/python scripts/eval_cross_book.py --out /tmp/cross_book.json
+./.venv/bin/python scripts/collect_long_samples.py --out /tmp/long_samples.json
+./.venv/bin/python scripts/analyze_text_quality.py --samples /tmp/long_samples.json
 ```
 
 ## 硬件三档
