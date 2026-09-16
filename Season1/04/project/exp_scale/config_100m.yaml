@@ -1,0 +1,32 @@
+# 04 篇配置：100M 档（本篇目标——8GB 消费级 GPU 训 100M）
+# experiment 段迁移时不变；hardware 段换机器只改这里
+#
+# 显存账（8GB 卡，实际可用约 6.78GB）：
+#   权重 fp32 约 0.4GB + 梯度 0.4GB + AdamW 状态 0.8GB = 1.6GB
+#   激活（batch 4 × seq 256 × hidden 768 × 12 层，AMP fp16）约 1.5GB
+#   合计约 3.1GB，留足余量。若 OOM：先降 batch_size，再降 seq_len。
+
+experiment:
+  name: scale_100m
+  corpus: large        # 大语料（四大名著）
+  seed: 42
+  steps: 8000
+  warmup_steps: 300
+  min_lr_ratio: 0.1
+  vocab_size: 0
+  hidden: 768
+  layers: 12
+  heads: 12
+  seq_len: 256
+  lr: 3.0e-4
+  weight_decay: 0.1
+  grad_clip: 1.0
+  grad_accum: 4        # 等效 batch = 4 × 4 = 16
+  eval_every: 250
+  log_every: 50
+  gen_tokens: 200
+
+hardware:
+  device: cuda
+  batch_size: 4        # 8GB 卡的关键旋钮；OOM 时先降这里
+  num_workers: 2

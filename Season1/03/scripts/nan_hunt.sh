@@ -16,7 +16,7 @@ from pathlib import Path
 from exp_superminigpt import train as T
 
 cfg = {
-    "experiment": {"name": "supersuperminigpt_nan", "seed": 42, "steps": 3000, "warmup_steps": 0,
+    "experiment": {"name": "superminigpt_nan", "seed": 42, "steps": 3000, "warmup_steps": 0,
                     "hidden": 192, "layers": 6, "heads": 6, "seq_len": 128,
                     "lr": 5e-2, "eval_every": 200, "log_every": 50, "gen_tokens": 200},
     "hardware": {"device": "cuda", "batch_size": 32, "num_workers": 2},
@@ -37,7 +37,7 @@ val_loader = DataLoader(val_ds, batch_size=hw["batch_size"], shuffle=False, drop
 
 model = SuperMiniGPT(tok.vocab_size, exp["hidden"], exp["layers"], exp["heads"], exp["seq_len"]).to("cuda")
 opt = torch.optim.AdamW(model.parameters(), lr=exp["lr"], weight_decay=0.1)
-rl = log_mod.RunLogger("runs", "supersuperminigpt_nan_lr5e-2_noclip")
+rl = log_mod.RunLogger("runs", "superminigpt_nan_lr5e-2_noclip")
 rl.write_env_card(log_mod.env_card())
 
 history, nan_at = [], None

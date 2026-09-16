@@ -1,0 +1,27 @@
+# 04 篇配置：10M 档（baseline，与 03 篇规模接近）
+# experiment 段迁移时不变；hardware 段换机器只改这里
+
+experiment:
+  name: scale_10m
+  corpus: large        # small=西游记单书 / large=四大名著
+  seed: 42
+  steps: 3000
+  warmup_steps: 100    # 线性升温步数（大模型需要，小模型也受益）
+  min_lr_ratio: 0.1    # cosine 衰减到 lr 的 10%
+  vocab_size: 0        # 由语料自动决定
+  hidden: 384
+  layers: 6
+  heads: 6
+  seq_len: 256
+  lr: 3.0e-4
+  weight_decay: 0.1
+  grad_clip: 1.0
+  grad_accum: 1        # 梯度累积步数（小显存补大 batch）
+  eval_every: 200
+  log_every: 50
+  gen_tokens: 200
+
+hardware:
+  device: cuda
+  batch_size: 16
+  num_workers: 2

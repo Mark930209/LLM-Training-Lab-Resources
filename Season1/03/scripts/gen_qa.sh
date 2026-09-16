@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # gen_qa.sh —— 生成模型答事实问题实测：看它怎么"编"
-# 前置：train.py 已保存权重（runs/minigpt_main_*/model.pt，xiyouji 语料）
+# 前置：train.py 已保存权重（runs/superminigpt_main_*/model.pt，xiyouji 语料）
 set -euo pipefail
 cd ~/llm-training-lab
 source .venv/bin/activate

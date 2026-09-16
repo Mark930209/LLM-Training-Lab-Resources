@@ -1,0 +1,27 @@
+# 04 篇配置：30M 档（中间规模，验证放大趋势）
+# experiment 段迁移时不变；hardware 段换机器只改这里
+
+experiment:
+  name: scale_30m
+  corpus: large        # 默认用大语料（四大名著）
+  seed: 42
+  steps: 5000
+  warmup_steps: 200
+  min_lr_ratio: 0.1
+  vocab_size: 0
+  hidden: 576
+  layers: 8
+  heads: 8
+  seq_len: 256
+  lr: 3.0e-4
+  weight_decay: 0.1
+  grad_clip: 1.0
+  grad_accum: 2        # 等效 batch = 8 × 2 = 16
+  eval_every: 250
+  log_every: 50
+  gen_tokens: 200
+
+hardware:
+  device: cuda
+  batch_size: 8
+  num_workers: 2

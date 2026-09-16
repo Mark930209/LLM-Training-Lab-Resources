@@ -1,0 +1,37 @@
+{
+  "books": [
+    {
+      "book": "xiyouji",
+      "title": "西游记",
+      "chapters": 100,
+      "total_chars": 723296,
+      "vocab_size": 4532
+    },
+    {
+      "book": "hongloumeng",
+      "title": "红楼梦",
+      "chapters": 120,
+      "total_chars": 870718,
+      "vocab_size": 4419
+    },
+    {
+      "book": "sanguoyanyi",
+      "title": "三国演义",
+      "chapters": 120,
+      "total_chars": 596473,
+      "vocab_size": 4048
+    },
+    {
+      "book": "shuihuzhuan",
+      "title": "水浒传",
+      "chapters": 120,
+      "total_chars": 900994,
+      "vocab_size": 4389
+    }
+  ],
+  "small_chars": 723296,
+  "large_chars": 3091487,
+  "small_vocab": 4532,
+  "large_vocab": 6015,
+  "total_chapters": 460
+}
