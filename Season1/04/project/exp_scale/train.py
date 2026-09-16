@@ -1,8 +1,8 @@
-"""train.py —— 真正的训练程序（04 篇核心交付物）。
+"""train.py —— 可复用的训练程序（04 篇核心交付物）。
 
-与 03 篇玩具循环的差别，就是本篇要讲的"工程件"：
+与 03 篇演示循环的差别，就是本篇要讲的"工程件"：
 
-    03 玩具循环                      04 真正的训练程序
+    03 演示循环                      04 可复用的训练程序
     ─────────────────────────────    ─────────────────────────────
     常数 lr                          warmup + cosine 调度
     单步 batch                       gradient accumulation（小显存补大 batch）
@@ -72,7 +72,7 @@ def save_checkpoint(path: Path, model, opt, scaler, step: int, cfg: dict,
     """保存完整训练状态：不只是权重，还要能"接着训"。
 
     03 篇只存 model.state_dict()，恢复后优化器动量、学习率进度全丢，
-    续训等于重新开始。真正的训练程序必须把这三样一起存。
+    续训等于重新开始。可复用的训练程序必须把这三样一起存。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({
