@@ -28,5 +28,5 @@ experiment:
 
 hardware:
   device: cuda
-  batch_size: 4        # 8GB 卡的关键旋钮；OOM 时先降这里
+  batch_size: 4        # 8GB 卡的关键参数；OOM 时先降这里
   num_workers: 2

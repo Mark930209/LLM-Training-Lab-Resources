@@ -63,7 +63,7 @@ def estimate_training_memory_mb(params: int, seq_len: int, batch_size: int,
         其他          logits/临时缓冲，按激活的 20% 估
 
     这套估算的用途不是精确预测，而是在启动前判断"这个配置要不要 OOM"，
-    以及 OOM 时知道该动哪个旋钮（batch / seq_len / amp）。
+    以及 OOM 时知道该调哪个参数（batch / seq_len / amp）。
     """
     mb = 1024 * 1024
     weights = params * 4
