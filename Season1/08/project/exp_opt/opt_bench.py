@@ -234,6 +234,117 @@ def bench(opts: set, vocab_size: int, hidden: int, layers: int, heads: int,
     }
 
 
+def parity(configs: list, vocab_size: int, hidden: int, layers: int, heads: int,
+           seq_len: int, batch: int, steps: int, data_dir: str,
+           device: str = "cuda") -> dict:
+    """同 token 预算、同数据流下对照多个优化组合。
+
+    bench 模式的数据是每步现生成的随机 token，且 accum 会改变
+    micro_batch 从而改变随机序列，final_loss 在组合之间不可比。
+    parity 预生成一份固定的训练 batch 序列与固定的验证集，
+    每个组合消费完全相同的数据，loss 差异才归因于优化手段本身。
+    """
+    # 固定数据：从真实语料切出训练 batch 序列 + 验证 batch（各组合共享）。
+    # 用真实语料而非随机 token，loss 才会随训练下降，"优化不改变收敛"
+    # 这个对照才成立；随机数据下所有组合的 loss 都平在 ln(vocab) 附近。
+    from exp_scale.data import CharTokenizer  # noqa: E402
+
+    corpus_path = Path(data_dir) / "corpus_large.txt"
+    text = corpus_path.read_text(encoding="utf-8")
+    tok = CharTokenizer(text)
+    ids = torch.tensor(tok.encode(text), dtype=torch.long)
+    n_batches = steps + 8
+    need = n_batches * batch * (seq_len + 1)
+    if len(ids) < need:
+        reps = need // len(ids) + 1
+        ids = ids.repeat(reps)
+    g = torch.Generator().manual_seed(1234)
+    offsets = torch.randint(0, len(ids) - seq_len - 1, (n_batches, batch),
+                            generator=g)
+    # 每个 batch 形状 (batch, seq_len+1)：第 i 行是 ids[off_i : off_i+seq_len+1]
+    # 训练时切成 x=[:, :-1] / y=[:, 1:]
+    batches = [
+        torch.stack([ids[o:o + seq_len + 1] for o in off.tolist()])
+        for off in offsets
+    ]
+    train_batches = batches[:steps]
+    val_batches = batches[steps:]
+    real_vocab = tok.vocab_size
+
+    results = []
+    for cfg in configs:
+        opts = set() if cfg == "baseline" else set(cfg.split(","))
+        use_amp = "amp" in opts
+        use_accum = "accum" in opts
+        use_ckpt = "ckpt" in opts
+        use_low = "lowstate" in opts
+        use_off = "offload" in opts
+        set_none = "setnone" in opts
+        accum = 4 if use_accum else 1
+
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        set_all_seeds(42, deterministic=False)
+        model = build_model(real_vocab, hidden, layers, heads, seq_len,
+                            use_ckpt, device)
+        if use_off:
+            opt = OffloadAdamW(model.parameters(), lr=3e-4, weight_decay=0.1)
+        elif use_low:
+            opt = AdamW16(model.parameters(), lr=3e-4, weight_decay=0.1)
+        else:
+            opt = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=0.1)
+        scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+
+        t0 = time.perf_counter()
+        model.train()
+        for step in range(steps):
+            chunk = train_batches[step].to(device)
+            x_full, y_full = chunk[:, :-1], chunk[:, 1:]
+            opt.zero_grad(set_to_none=set_none)
+            for m in range(accum):
+                sl = slice(m * (batch // accum), (m + 1) * (batch // accum))
+                with torch.autocast(device_type="cuda", dtype=torch.float16,
+                                    enabled=use_amp):
+                    loss = contract_loss(model(x_full[sl]), y_full[sl]) / accum
+                if use_amp:
+                    scaler.scale(loss).backward()
+                else:
+                    loss.backward()
+            if use_amp:
+                scaler.unscale_(opt)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            if use_amp:
+                scaler.step(opt)
+                scaler.update()
+            else:
+                opt.step()
+        wall = time.perf_counter() - t0
+
+        model.eval()
+        val_total = 0.0
+        with torch.no_grad():
+            for chunk in val_batches:
+                chunk = chunk.to(device)
+                with torch.autocast(device_type="cuda", dtype=torch.float16,
+                                    enabled=use_amp):
+                    val_total += contract_loss(
+                        model(chunk[:, :-1]), chunk[:, 1:]).item()
+        val_loss = val_total / len(val_batches)
+        results.append({
+            "opts": cfg,
+            "wall_time_s": round(wall, 2),
+            "tok_per_s": round(steps * batch * seq_len / wall, 0),
+            "peak_mb": _mb(torch.cuda.max_memory_allocated()),
+            "val_loss": round(val_loss, 4),
+            "val_loss_is_nan": val_loss != val_loss,
+        })
+        del model, opt, scaler
+        torch.cuda.empty_cache()
+
+    return {"steps": steps, "batch": batch, "seq": seq_len,
+            "shared_data": True, "results": results}
+
+
 def oom_evidence(vocab_size, hidden, layers, heads, seq_len, batch,
                  mem_fraction: float | None = None,
                  device: str = "cuda") -> dict:
@@ -253,16 +364,19 @@ def oom_evidence(vocab_size, hidden, layers, heads, seq_len, batch,
     timeline = [_snap("model_loaded"), _snap("optimizer_init")]
     oom = None
     stage = None
-    x = torch.randint(0, vocab_size, (batch, seq_len), device=device)
-    y = torch.randint(0, vocab_size, (batch, seq_len), device=device)
     try:
-        with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=False):
-            loss = contract_loss(model(x), y)
-        timeline.append(_snap("forward"))
-        loss.backward()
-        timeline.append(_snap("backward"))
-        opt.step()
-        timeline.append(_snap("step"))
+        for step in range(3):
+            x = torch.randint(0, vocab_size, (batch, seq_len), device=device)
+            y = torch.randint(0, vocab_size, (batch, seq_len), device=device)
+            opt.zero_grad(set_to_none=True)
+            with torch.autocast(device_type="cuda", dtype=torch.float16,
+                                enabled=False):
+                loss = contract_loss(model(x), y)
+            timeline.append(_snap(f"forward_{step}"))
+            loss.backward()
+            timeline.append(_snap(f"backward_{step}"))
+            opt.step()
+            timeline.append(_snap(f"step_{step}"))
     except torch.cuda.OutOfMemoryError as exc:
         oom = str(exc)[:300]
         stage = timeline[-1]["stage"] + " 之后"
@@ -300,12 +414,20 @@ def main():
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--steps", type=int, default=100)
     ap.add_argument("--mem-fraction", type=float, default=None)
+    ap.add_argument("--data-dir", default="exp_scale/data",
+                    help="parity 模式读取真实语料的目录")
+    ap.add_argument("--configs", default="baseline,accum,amp,ckpt,lowstate",
+                    help="parity 模式要对照的组合，逗号分隔多组、组内逗号分隔开关")
     ap.add_argument("--output", default="/tmp/opt_bench.json")
     args = ap.parse_args()
 
     if args.mode == "oom":
         out = oom_evidence(args.vocab, args.hidden, args.layers, args.heads,
                            args.seq, args.batch, args.mem_fraction)
+    elif args.mode == "parity":
+        configs = args.configs.split(";")
+        out = parity(configs, args.vocab, args.hidden, args.layers, args.heads,
+                     args.seq, args.batch, args.steps, args.data_dir)
     else:
         opts = set() if args.opts == "baseline" else set(args.opts.split(","))
         out = bench(opts, args.vocab, args.hidden, args.layers, args.heads,
