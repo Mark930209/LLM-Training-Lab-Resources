@@ -65,6 +65,20 @@ def expected_initial_loss(vocab_size: int) -> float:
     return math.log(vocab_size)
 
 
+def char_freq_entropy(text: str) -> float:
+    """语料的字符频率熵（nats）：随机标签下 loss 的理论下界。
+
+    标签与输入脱钩时，模型最多只能学到字符的边际频率分布，
+    loss 会停在这个值附近而不再下降（label_shuffle 实测 6.29 vs 6.3680）。
+    健康训练会突破它，因为序列上下文提供了额外信息。
+    """
+    counts: dict[str, int] = {}
+    for ch in text:
+        counts[ch] = counts.get(ch, 0) + 1
+    total = sum(counts.values())
+    return -sum((c / total) * math.log(c / total) for c in counts.values())
+
+
 def param_checksum(model: torch.nn.Module) -> str:
     """模型权重校验和：恢复一致性测试的基准。"""
     h = hashlib.sha256()

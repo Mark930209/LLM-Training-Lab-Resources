@@ -9,10 +9,12 @@
 
 ```text
 exp_debug/
-├── fail_modes.py     # 故障注入框架：14 个开关 + 阶段/静默分类
-├── diagnostics.py    # 诊断面板：重复率 / 重叠数 / 更新量 / 校验和
-├── train_debug.py    # 主实验程序（基线 + 单故障 + 续训对照）
-└── run_all.py        # 一键跑完整实验矩阵（16 组）
+├── fail_modes.py          # 故障注入框架：14 个开关 + 阶段/静默分类
+├── diagnostics.py         # 诊断面板单项指标：重复率 / 重叠数 / 更新量 / 校验和
+├── correctness_harness.py # 五阶段检查器：把单项指标组织成带阈值的告警
+├── train_debug.py         # 主实验程序（基线 + 单故障 + 续训对照）
+├── run_all.py             # 一键跑完整实验矩阵（16 组）
+└── README.md
 ```
 
 ## 快速开始
@@ -78,6 +80,15 @@ python -m exp_debug.train_debug --config exp_scale/config_10m.yaml --steps 300 -
 | 反向 | grad_norm | 有限、量级稳定 | 爆炸 / 消失 / NaN |
 | 更新 | update_ratio = ‖Δw‖/‖w‖ | ~1e-3 | lr_zero / 过大更新 / 跳步 |
 | 恢复 | param/opt/rng 校验和 | 与连续训练一致 | 伪续训 |
+
+## Harness 告警验证（16 组实测）
+
+Harness 的价值在于能抓到注入的故障，16 组实验的告警触发情况：
+
+- **触发告警（12 组）**：label_shift（val 高于 ln(vocab)）、label_shuffle（loss 停在频率熵 6.3680）、dup_batch（重复率 0.5，共 300 次）、val_leak（重叠 1000 条）、lr_zero（update_ratio 连续 10 步为 0）、lr_huge / lr_huge_noclip（update_ratio 超限）、amp_overflow（grad_norm nan，共 30 次）、resume_opt / resume_rng（校验和不一致）、resume_sched（调度器进度 0 vs 150）
+- **诚实不告警（4 组）**：baseline、no_clip（单独无害）、resume_scaler（逐位一致）、continuous / resume_full（恢复正确）
+- **只观测不干预**：接入 Harness 前后，基线的 train 5.1396 / val 5.3229 / param_checksum d577125c47b4 逐位一致
+- 告警按类别去重计数（label_shuffle 早期版本曾刷屏 97 条，已修）；结果 JSON 带 `harness_ok` / `harness_alerts` / `harness_summary` 三个字段
 
 ## 与 04 篇的关系
 

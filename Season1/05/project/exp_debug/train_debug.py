@@ -33,10 +33,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common import config as cfg_mod, logging as log_mod  # noqa: E402
 from common.reproducibility import set_all_seeds  # noqa: E402
+from exp_debug.correctness_harness import HarnessConfig, HarnessRunner  # noqa: E402
 from exp_debug.diagnostics import (  # noqa: E402
-    batch_dup_rate, data_fingerprint, dataset_overlap, expected_initial_loss,
-    first_nonfinite_step, opt_checksum, param_checksum, rng_checksum,
-    snapshot_params, update_ratio)
+    batch_dup_rate, char_freq_entropy, data_fingerprint, dataset_overlap,
+    expected_initial_loss, first_nonfinite_step, opt_checksum, param_checksum,
+    rng_checksum, snapshot_params, update_ratio)
 from exp_debug.fail_modes import (  # noqa: E402
     FAULT_STAGES, apply_fault, fault_clip_enabled, fault_lr_multiplier)
 from exp_scale.data import LMDataset, load_corpus  # noqa: E402
@@ -92,6 +93,14 @@ def run(cfg: dict, steps: int, fault: str | None = None,
                                          "exp_scale" / "data",
                                          exp["seq_len"], corpus=corpus)
 
+    # 字符频率熵：用 train+val 合并的完整 token 分布算（= 全语料字符熵），
+    # 必须在 val_leak 改写数据集之前算，否则泄漏会污染这个下界。
+    # 大语料实测 6.3680 nats，是随机标签下 loss 的理论下界。
+    _full_ids = torch.cat([train_ds.data, val_ds.data])
+    _counts = torch.bincount(_full_ids).double()
+    _probs = _counts[_counts > 0] / _counts.sum()
+    freq_entropy = float(-(_probs * _probs.log()).sum())
+
     # val_leak 在数据集构建时注入：train 前 10% 拼进 val
     if fault == "val_leak":
         full_ids = train_ds.data
@@ -106,6 +115,11 @@ def run(cfg: dict, steps: int, fault: str | None = None,
 
     # 数据集重叠体检：val_leak 的直接证据（健康划分 = 0）
     overlap = dataset_overlap(train_ds, val_ds)
+
+    # ---- Correctness Harness：五阶段诊断面板（只观测，不干预训练）----
+    harness = HarnessRunner(HarnessConfig(vocab_size=tok.vocab_size,
+                                          freq_entropy=freq_entropy))
+    harness.check_dataset(train_ds, val_ds)
 
     model = SuperMiniGPT(tok.vocab_size, exp["hidden"], exp["layers"],
                          exp["heads"], exp["seq_len"]).to(device)
@@ -129,11 +143,14 @@ def run(cfg: dict, steps: int, fault: str | None = None,
         logits = model(x0)
         init_loss = nn.functional.cross_entropy(
             logits.reshape(-1, logits.shape[-1]), y0.reshape(-1)).item()
+    harness.check_initial_loss(init_loss)
 
     # ---- 恢复阶段 ----
     start_step = 0
+    ckpt_step = 0
     if resume:
         ckpt = torch.load(resume, map_location=device, weights_only=False)
+        ckpt_step = ckpt.get("step", 0)
         model.load_state_dict(ckpt["model"])
         # 伪续训：按故障开关决定恢复哪些状态
         if fault not in ("resume_opt",):
@@ -161,6 +178,9 @@ def run(cfg: dict, steps: int, fault: str | None = None,
                 pass
         else:
             start_step = ckpt.get("step", 0)
+        # Harness 恢复阶段检查：逐组件校验和 + 调度器进度
+        harness.check_resume(model, opt, ckpt.get("checksums"))
+        harness.check_scheduler_step(start_step, ckpt_step)
 
     # ---- 训练循环（带诊断面板）----
     history = {"train": [], "val": [], "lr": [], "grad_norm": [],
@@ -184,7 +204,7 @@ def run(cfg: dict, steps: int, fault: str | None = None,
                 x, y = apply_fault(fault, x, y)
 
             fp = data_fingerprint(x, y)
-            history["batch_dup"].append(batch_dup_rate(x))
+            history["batch_dup"].append(harness.check_batch(x))
             before = snapshot_params(model)
 
             with torch.autocast(device_type="cuda", dtype=torch.float16,
@@ -201,6 +221,7 @@ def run(cfg: dict, steps: int, fault: str | None = None,
             if scaler is not None and use_amp:
                 scaler.unscale_(opt)
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
+            harness.check_grad(grad_norm, step)
 
             lr_now = cosine_with_warmup(step, steps, exp["warmup_steps"],
                                         exp["lr"] * lr_mult,
@@ -216,7 +237,8 @@ def run(cfg: dict, steps: int, fault: str | None = None,
             opt.zero_grad(set_to_none=True)
             step += 1
 
-            ur = update_ratio(model, before)
+            ur = harness.check_update(model, before, step, scaler=scaler)
+            harness.check_loss_floor(loss.item(), step)
             if not math.isfinite(loss.item()) and nan_at is None:
                 nan_at = step
             if step % 10 == 0:
@@ -228,6 +250,7 @@ def run(cfg: dict, steps: int, fault: str | None = None,
             if step % 100 == 0 or step == steps:
                 vl = estimate_loss(model, val_loader, device, amp=use_amp)
                 history["val"].append(round(vl, 4))
+                harness.check_val_loss(vl, loss.item(), step)
                 rl.log.info("step %d loss %.4f val %.4f gnorm %.2f ur %.2e",
                             step, loss.item(), vl, float(grad_norm), ur)
             if nan_at is not None:
@@ -263,6 +286,10 @@ def run(cfg: dict, steps: int, fault: str | None = None,
         "batch_dup_rate_mean": (sum(history["batch_dup"]) /
                                  max(len(history["batch_dup"]), 1)),
         "dataset_overlap": overlap,
+        "freq_entropy": round(freq_entropy, 4),
+        "harness_ok": harness.ok,
+        "harness_alerts": harness.state.messages(),
+        "harness_summary": harness.summary(),
         "wall_time_s": round(wall_s, 1),
         "train_curve": history["train"],
         "val_curve": history["val"],
@@ -278,6 +305,8 @@ def run(cfg: dict, steps: int, fault: str | None = None,
             "step": step,
             "rng_cpu": torch.get_rng_state(),
             "rng_cuda": torch.cuda.get_rng_state() if torch.cuda.is_available() else None,
+            # 续训一致性的参考基准，供 harness.check_resume 逐组件比对
+            "checksums": harness.snapshot_state(model, opt),
         }
         torch.save(ck, save_ckpt)
         result["saved_ckpt"] = save_ckpt
