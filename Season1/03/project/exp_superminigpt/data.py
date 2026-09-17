@@ -3,7 +3,8 @@
 char-level tokenizer：把文本拆成字符，每个字符一个 id。
 为什么不用 BPE：本篇的主题是"让模型学会学习"，tokenizer 的复杂度
 会淹没机制本身；char-level 词表小（~100）、无 OOV，是教学最优解。
-04 篇训练真实模型时会切换到 BPE，到时候讲 BPE 的机制与代价。
+04 篇继续用 char-level 把语料规模做大；06 篇接入 Hugging Face 时
+会切换到 BPE，到时候讲 BPE 的机制与代价。
 
 数据集：Tiny Shakespeare（karpathy char-rnn 用的那份，约 1.1MB，公开语料）。
 训练/验证切分 90/10，验证集是判断"模型在学还是在背"的唯一标尺。
