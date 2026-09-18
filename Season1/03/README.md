@@ -1,6 +1,6 @@
 # DevResources/Season1/03 —— SuperMiniGPT v0 资源包
 
-对应文章：`Articles/Season1/第一个实验：从零训练一个SuperMiniGPT.md`
+对应文章：`Articles/Season1/03_第一个实验：从零训练一个SuperMiniGPT.md`
 
 ## 包内容
 
