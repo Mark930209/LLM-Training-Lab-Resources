@@ -1,6 +1,6 @@
-# DevResources/Season1/11 —— DDP Lab（分布式正确性）
+# DevResources/Season3/12 —— DDP Lab（分布式正确性）
 
-对应文章：`Articles/Season1/11_同一份训练任务，怎样改成双卡 DDP 而不改变结果？.md`
+对应文章：`Articles/Season3/12_同一份训练任务，怎样改成双卡 DDP 而不改变结果？.md`
 
 ## 本篇解决什么问题
 
@@ -36,7 +36,7 @@
 | `exp_ddp/` | 本篇包 | DDP 三级对齐门禁 + sampler 审计 + 故障注入 |
 
 ```bash
-cp -r DevResources/Season1/11/project/exp_ddp ~/llm-training-lab/
+cp -r DevResources/Season3/12/project/exp_ddp ~/llm-training-lab/
 cd ~/llm-training-lab
 ```
 
@@ -57,15 +57,15 @@ cd ~/llm-training-lab
 
 # 三级对齐门禁（一条命令跑单进程 + 2-rank DDP 并比对）
 ./.venv/bin/python -m exp_ddp.parity_check --steps 30 --global-batch 16 \
-    --out results/Season1/11/parity.json
+    --out results/Season3/12/parity.json
 
 # 梯度同步观测：证明 all-reduce 发生在 backward 中
 ./.venv/bin/torchrun --nproc_per_node=2 --master_port=29542 -m exp_ddp.ddp_train \
-    --mode gradsync --global-batch 16 --out results/Season1/11/gradsync.json
+    --mode gradsync --global-batch 16 --out results/Season3/12/gradsync.json
 
 # sampler 审计（纯 CPU，不需要多卡，秒级）
 ./.venv/bin/python -m exp_ddp.sampler_audit --n-samples 480 --world 2 --batch 8 --epochs 3 \
-    --out results/Season1/11/sampler_audit.json
+    --out results/Season3/12/sampler_audit.json
 
 # 故障注入（5 个）
 ./.venv/bin/torchrun --nproc_per_node=2 --master_port=29545 -m exp_ddp.ddp_train \
@@ -82,7 +82,7 @@ cd ~/llm-training-lab
 
 ## 结果文件
 
-`results/Season1/11/`（28 个）。核心：
+`results/Season3/12/`（28 个）。核心：
 
 | 文件 | 内容 |
 |---|---|
@@ -114,7 +114,7 @@ cd ~/llm-training-lab
 
 ## 已知边界
 
-- 本篇 2 个 rank 共享一张 3070（gloo），生产是多卡多机（NCCL）。all-reduce 数学一致，但通信速度、bucket 策略、overlap 行为不同（13 篇）。
+- 本篇 2 个 rank 共享一张 3070（gloo），生产是多卡多机（NCCL）。all-reduce 数学一致，但通信速度、bucket 策略、overlap 行为不同（14 篇）。
 - wall_s 数字（DDP 7.75s 对单进程 6.51s）只说明"共享单卡时 DDP 更慢"，**不能外推为"DDP 比单卡慢"**。
 - 跨机 NCCL 没打通：两个 WSL2 NAT 互相隔离，SSH 隧道只覆盖 rendezvous 端口，覆盖不了 NCCL 动态协商的数据通道。详见 `xnode_nccl_attempt.json` 与文章第 7 章。有多卡环境的读者可直接 `--backend nccl` 复现。
 - 全程 fp32 不用 AMP：GradScaler 跳步会引入额外状态，让逐位对齐判据变模糊。

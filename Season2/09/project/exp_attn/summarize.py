@@ -4,8 +4,8 @@
 只读 results 文件，不改任何数据。
 
 用法：
-    python -m exp_attn.summarize results/Season1/09/backend_seq1024_fp16.json
-    python -m exp_attn.summarize results/Season1/09/*.json
+    python -m exp_attn.summarize results/Season2/09/backend_seq1024_fp16.json
+    python -m exp_attn.summarize results/Season2/09/*.json
 """
 
 from __future__ import annotations

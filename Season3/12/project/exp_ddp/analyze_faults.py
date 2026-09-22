@@ -2,7 +2,7 @@
 import json
 import pathlib
 
-R = pathlib.Path("results/Season1/11")
+R = pathlib.Path("results/Season3/12")
 
 
 def L(n):

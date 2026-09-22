@@ -1,6 +1,6 @@
-# DevResources/Season1/08 —— 显存优化六项交换
+# DevResources/Season2/08 —— 显存优化六项交换
 
-对应文章：`Articles/Season1/08_目标模型放不进显存时，哪些优化真的值得用？.md`
+对应文章：`Articles/Season2/08_目标模型放不进显存时，哪些优化真的值得用？.md`
 
 ## 本篇解决什么问题
 
@@ -31,7 +31,7 @@
 | `exp_opt/` | 本篇包 | 六项显存交换 + OOM 红线 + parity |
 
 ```bash
-cp -r DevResources/Season1/08/project/exp_opt ~/llm-training-lab/
+cp -r DevResources/Season2/08/project/exp_opt ~/llm-training-lab/
 cd ~/llm-training-lab
 ```
 
@@ -43,12 +43,12 @@ cd ~/llm-training-lab
 # baseline：目标配置在红线下 OOM
 ./.venv/bin/python -m exp_opt.opt_bench --mode bench --opts baseline --hidden 768 \
     --layers 12 --heads 12 --seq 256 --batch 8 --steps 50 --mem-fraction 0.35 \
-    --output results/Season1/08/bench_baseline_oom.json
+    --output results/Season2/08/bench_baseline_oom.json
 
 # 单项与组合交换
 ./.venv/bin/python -m exp_opt.opt_bench --mode bench --opts amp --mem-fraction 0.35 \
     --hidden 768 --layers 12 --heads 12 --seq 256 --batch 8 --steps 50 \
-    --output results/Season1/08/bench_amp.json
+    --output results/Season2/08/bench_amp.json
 
 ./.venv/bin/python -m exp_opt.opt_bench --mode bench --opts accum,amp,setnone --mem-fraction 0.35 ...
 ./.venv/bin/python -m exp_opt.opt_bench --mode bench --opts amp,ckpt --mem-fraction 0.35 ...
@@ -65,7 +65,7 @@ cd ~/llm-training-lab
 
 ## 结果文件
 
-`results/Season1/08/`（12 个），bench 矩阵核心数字：
+`results/Season2/08/`（12 个），bench 矩阵核心数字：
 
 | 配置 | peak MB | tok/s | final_loss | 结论 |
 |---|---|---|---|---|

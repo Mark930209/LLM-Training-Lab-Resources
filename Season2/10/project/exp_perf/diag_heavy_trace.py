@@ -29,7 +29,7 @@ from exp_perf.perf_bench import (  # noqa: E402
 from exp_perf.perf_harness import export_trace_once  # noqa: E402
 from exp_hf.contract import contract_loss  # noqa: E402
 
-TRACE_OUT = Path("results/Season1/10/_diag_heavy_trace.json")
+TRACE_OUT = Path("results/Season2/10/_diag_heavy_trace.json")
 
 
 class Args:

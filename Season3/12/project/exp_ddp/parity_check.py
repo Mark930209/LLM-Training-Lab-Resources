@@ -15,7 +15,7 @@
 
 用法（WSL 项目根目录）：
   ./.venv/bin/python -m exp_ddp.parity_check --steps 30 --global-batch 16 \
-      --out results/Season1/11/parity.json
+      --out results/Season3/12/parity.json
 """
 
 from __future__ import annotations

@@ -21,8 +21,8 @@ w/g/o 会退化成同一个数）。
 的适用边界，不是 bug。
 
 用法：
-    python -m exp_mem.mem_estimator --fit results/Season1/07/sweep_fit.json \
-        --blind results/Season1/07/sweep_blind.json --output .../estimator_report.json
+    python -m exp_mem.mem_estimator --fit results/Season2/07/sweep_fit.json \
+        --blind results/Season2/07/sweep_blind.json --output .../estimator_report.json
 """
 
 from __future__ import annotations

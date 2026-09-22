@@ -19,21 +19,26 @@ DevResources/
 │       ├── README.md          # 本篇资源使用说明
 │       ├── scripts/           # 环境初始化、体检、冒烟训练、复现性对照、数据采集、迁移
 │       └── project/           # common/ 可复现骨架 + exp_smoke 统一接口样板
-└── Season1/
-    ├── 03/                    # SuperMiniGPT v0（project/ 含 common + exp_superminigpt + 语料）
-    ├── 04/                    # 可复用训练程序（project/ 含 common + exp_scale + 四大名著语料）
-    ├── 05/                    # 训练正确性体检（project/ 含 exp_debug）
-    ├── 06/                    # HF 接口契约（project/ 含 exp_hf）
-    ├── 07/                    # 显存去哪了（project/ 含 exp_mem）
-    ├── 08/                    # 显存优化六项交换（project/ 含 exp_opt）
-    ├── 09/                    # Attention Kernel Lab（project/ 含 exp_attn）
-    ├── 10/                    # 单卡性能（project/ 含 exp_perf）
-    └── 11/                    # DDP 正确性（project/ 含 exp_ddp）
+├── Season1/
+│   ├── 03/                    # SuperMiniGPT v0（project/ 含 common + exp_superminigpt + 语料）
+│   ├── 04/                    # 可复用训练程序（project/ 含 common + exp_scale + 四大名著语料）
+│   ├── 05/                    # 训练正确性体检（project/ 含 exp_debug）
+│   └── 06/                    # HF 接口契约（project/ 含 exp_hf）
+├── Season2/
+│   ├── 07/                    # 显存去哪了（project/ 含 exp_mem）
+│   ├── 08/                    # 显存优化六项交换（project/ 含 exp_opt）
+│   ├── 09/                    # Attention Kernel Lab（project/ 含 exp_attn）
+│   └── 10/                    # 单卡性能（project/ 含 exp_perf）
+└── Season3/
+    └── 12/                    # DDP 正确性（project/ 含 exp_ddp）
 ```
+
+> 11 篇（双卡训练环境搭建）的工程包待该篇定稿后补入 `Season3/11/`。
+> 其跨机环境的实验档案已先行落在 `results/Season3/11/`。
 
 ## 各篇包是累积的，不是独立的
 
-**这是使用本资源最重要的一条**。系列各篇的实验层层依赖：11 篇的 `exp_ddp` 要 import 06 篇的 `build_llama` 与 04 篇的 `CharTokenizer`，10 篇的 `exp_perf` 要复用 06 篇的 `contract_loss`。
+**这是使用本资源最重要的一条**。系列各篇的实验层层依赖：12 篇的 `exp_ddp` 要 import 06 篇的 `build_llama` 与 04 篇的 `CharTokenizer`，10 篇的 `exp_perf` 要复用 06 篇的 `contract_loss`。
 
 所以每篇的 `project/` 只含**本篇新增**的模块，不是完整可独立运行的工程。正确用法是按篇号顺序，把各篇 `project/` 下的模块累积拷进同一个工作目录：
 
@@ -46,7 +51,7 @@ cp -r <DevResources>/Season0/02/project/exp_smoke .
 # 之后每篇只加自己的模块
 cp -r <DevResources>/Season1/04/project/exp_scale .
 cp -r <DevResources>/Season1/06/project/exp_hf .
-cp -r <DevResources>/Season1/11/project/exp_ddp .
+cp -r <DevResources>/Season3/12/project/exp_ddp .
 # ……依此类推
 ```
 

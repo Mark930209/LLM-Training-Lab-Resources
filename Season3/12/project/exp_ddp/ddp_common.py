@@ -1,4 +1,4 @@
-"""ddp_common.py —— 11 篇 DDP Lab 的公共件。
+"""ddp_common.py —— 12 篇 DDP Lab 的公共件。
 
 设计要点（都服务于"与单卡逐位对齐"这个唯一判据）：
 

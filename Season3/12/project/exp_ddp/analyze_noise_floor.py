@@ -16,7 +16,7 @@ import pathlib
 
 import torch
 
-R = pathlib.Path("results/Season1/11")
+R = pathlib.Path("results/Season3/12")
 RUNS = pathlib.Path("runs/collect")
 
 
@@ -87,4 +87,4 @@ for f in ("fault_no_sampler", "fault_global_batch", "fault_sum_reduction"):
                                 "final_loss": L(f)["final_global_loss"]}
 (R / "fault_deviation.json").write_text(
     json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
-print("\n已写 results/Season1/11/fault_deviation.json")
+print("\n已写 results/Season3/12/fault_deviation.json")

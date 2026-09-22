@@ -1,6 +1,6 @@
-# DevResources/Season1/07 —— 显存去哪了
+# DevResources/Season2/07 —— 显存去哪了
 
-对应文章：`Articles/Season1/07_训练显存为什么总比公式算得多：追踪一个 step 的显存去向.md`
+对应文章：`Articles/Season2/07_训练显存为什么总比公式算得多：追踪一个 step 的显存去向.md`
 
 ## 本篇解决什么问题
 
@@ -33,7 +33,7 @@
 | `exp_mem/` | 本篇包 | 显存四口径探针 + 峰值估算器 |
 
 ```bash
-cp -r DevResources/Season1/07/project/exp_mem ~/llm-training-lab/
+cp -r DevResources/Season2/07/project/exp_mem ~/llm-training-lab/
 cd ~/llm-training-lab
 ```
 
@@ -44,28 +44,28 @@ cd ~/llm-training-lab
 
 # 阶段时间线：一个 step 内显存怎么涨怎么落（100M 档 + AMP）
 ./.venv/bin/python -m exp_mem.mem_probe --mode stage --hidden 768 --layers 12 \
-    --heads 12 --seq 256 --batch 8 --amp --output results/Season1/07/stage_100m_amp.json
+    --heads 12 --seq 256 --batch 8 --amp --output results/Season2/07/stage_100m_amp.json
 
 # 扫描：batch / seq / hidden / layers / 精度 / 优化器逐项变
 ./.venv/bin/python -m exp_mem.mem_probe --mode sweep --hidden 384 --layers 6 \
-    --seq 256 --batch 16 --output results/Season1/07/sweep_batch_16.json
+    --seq 256 --batch 16 --output results/Season2/07/sweep_batch_16.json
 
 # 碎片探测
-./.venv/bin/python -m exp_mem.mem_probe --mode frag --output results/Season1/07/frag_probe.json
+./.venv/bin/python -m exp_mem.mem_probe --mode frag --output results/Season2/07/frag_probe.json
 
 # OOM 红线：WSL2 下复现真 OOM（见"已知边界"）
 ./.venv/bin/python -m exp_mem.mem_probe --mode oom --mem-fraction 0.35 --hidden 768 \
-    --layers 12 --seq 256 --batch 8 --output results/Season1/07/oom_redline.json
+    --layers 12 --seq 256 --batch 8 --output results/Season2/07/oom_redline.json
 
 # 峰值估算器：拟合系数 + 盲测误差
-./.venv/bin/python -m exp_mem.mem_estimator --output results/Season1/07/estimator_report.json
+./.venv/bin/python -m exp_mem.mem_estimator --output results/Season2/07/estimator_report.json
 ```
 
 `--mode` 四选一：`stage` / `sweep` / `frag` / `oom`。`--opt` 可选 `adamw` / `sgd`。`--mem-fraction` 画显存红线（WSL2 复现 OOM 用）。
 
 ## 结果文件
 
-`results/Season1/07/`（20 个）：
+`results/Season2/07/`（20 个）：
 
 | 文件 | 内容 |
 |---|---|

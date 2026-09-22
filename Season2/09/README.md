@@ -1,6 +1,6 @@
-# DevResources/Season1/09 —— Attention Kernel Lab
+# DevResources/Season2/09 —— Attention Kernel Lab
 
-对应文章：`Articles/Season1/09_FlashAttention 为什么更快：从 Attention 矩阵到显存读写.md`
+对应文章：`Articles/Season2/09_FlashAttention 为什么更快：从 Attention 矩阵到显存读写.md`
 
 ## 本篇解决什么问题
 
@@ -38,8 +38,8 @@ FlashAttention 的浮点运算量比朴素实现更多，却跑得更快。如�
 | `exp_attn/` | 本篇包 | 五种 attention 实现 + backend 探测 + IO 推导 |
 
 ```bash
-cp -r DevResources/Season1/09/project/exp_attn ~/llm-training-lab/
-cp DevResources/Season1/09/project/dump_io_arithmetic.py ~/llm-training-lab/exp_attn/
+cp -r DevResources/Season2/09/project/exp_attn ~/llm-training-lab/
+cp DevResources/Season2/09/project/dump_io_arithmetic.py ~/llm-training-lab/exp_attn/
 cd ~/llm-training-lab
 ```
 
@@ -50,33 +50,33 @@ cd ~/llm-training-lab
 
 # backend 探测：这张卡上哪些 backend 可用，强制指定是否真的生效
 ./.venv/bin/python -m exp_attn.backend_probe --seq 1024 --batch 2 --heads 8 --dtype fp16 \
-    --out results/Season1/09/probe_seq1024_fp16.json
+    --out results/Season2/09/probe_seq1024_fp16.json
 
 # 数值一致性：五种实现对 naive 的误差
 ./.venv/bin/python -m exp_attn.correctness --seq 256 --dtype fp16 \
-    --out results/Season1/09/correctness_seq256_fp16.json
+    --out results/Season2/09/correctness_seq256_fp16.json
 
 # backend 对照（文章 1.2 节的表）
 ./.venv/bin/python -m exp_attn.attn_bench --mode backend --seq 1024 --batch 2 --heads 8 --dtype fp16 \
-    --out results/Season1/09/backend_seq1024_fp16.json
+    --out results/Season2/09/backend_seq1024_fp16.json
 
 # 四种 sweep
-./.venv/bin/python -m exp_attn.attn_bench --mode seq --dtype fp16 --out results/Season1/09/sweep_seq_fp16.json
-./.venv/bin/python -m exp_attn.attn_bench --mode shape --dtype fp16 --out results/Season1/09/sweep_headdim_fp16.json
-./.venv/bin/python -m exp_attn.attn_bench --mode dtype --out results/Season1/09/sweep_dtype.json
+./.venv/bin/python -m exp_attn.attn_bench --mode seq --dtype fp16 --out results/Season2/09/sweep_seq_fp16.json
+./.venv/bin/python -m exp_attn.attn_bench --mode shape --dtype fp16 --out results/Season2/09/sweep_headdim_fp16.json
+./.venv/bin/python -m exp_attn.attn_bench --mode dtype --out results/Season2/09/sweep_dtype.json
 
 # 端到端：kernel 收益在完整训练程序里被稀释多少
-./.venv/bin/python -m exp_attn.e2e_step --seq 1024 --dtype fp16 --out results/Season1/09/e2e_seq1024_fp16.json
+./.venv/bin/python -m exp_attn.e2e_step --seq 1024 --dtype fp16 --out results/Season2/09/e2e_seq1024_fp16.json
 
 # 算术强度推导（SCALED）
-./.venv/bin/python -m exp_attn.dump_io_arithmetic --out results/Season1/09/io_arithmetic.json
+./.venv/bin/python -m exp_attn.dump_io_arithmetic --out results/Season2/09/io_arithmetic.json
 ```
 
 `--mode` 五选一：`backend` / `seq` / `shape` / `dtype` / `causal`。`--impls` 可指定实现子集。
 
 ## 结果文件
 
-`results/Season1/09/`（15 个）：
+`results/Season2/09/`（15 个）：
 
 | 文件 | 内容 |
 |---|---|

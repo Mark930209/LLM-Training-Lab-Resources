@@ -1,4 +1,4 @@
-"""perf_report.py —— 把 results/Season1/10/*.json 汇总成性能报告（10 篇交付物）。
+"""perf_report.py —— 把 results/Season2/10/*.json 汇总成性能报告（10 篇交付物）。
 
 outline 要求的最终交付之一是 Single GPU Performance Report。
 本工具读全部结果 JSON，输出四张表：
@@ -11,8 +11,8 @@ outline 要求的最终交付之一是 Single GPU Performance Report。
 避免报告与结果文件不一致。
 
 用法：
-    python -m exp_perf.perf_report results/Season1/10
-    python -m exp_perf.perf_report results/Season1/10 --baseline baseline
+    python -m exp_perf.perf_report results/Season2/10
+    python -m exp_perf.perf_report results/Season2/10 --baseline baseline
 """
 
 from __future__ import annotations

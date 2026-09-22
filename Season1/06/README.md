@@ -27,7 +27,7 @@
         └── tokenizer_bpe.json  # 训练好的 BPE 分词器（8192 词表）
 ```
 
-`contract_loss` 是全系列后续所有篇的 loss 口径来源（07–11 篇都 import 它），保证"换模型不会偷偷换掉 loss 的定义"。
+`contract_loss` 是全系列后续所有篇的 loss 口径来源（07–12 篇都 import 它），保证"换模型不会偷偷换掉 loss 的定义"。
 
 ## 前置：本篇包依赖前序篇的模块
 

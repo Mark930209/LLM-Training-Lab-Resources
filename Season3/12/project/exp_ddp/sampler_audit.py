@@ -8,7 +8,7 @@
 
 用法：
   ./.venv/bin/python -m exp_ddp.sampler_audit --n-samples 64 --world 2 --epochs 3 \
-      --out results/Season1/11/sampler_audit.json
+      --out results/Season3/12/sampler_audit.json
 """
 
 from __future__ import annotations

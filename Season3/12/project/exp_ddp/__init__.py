@@ -1,4 +1,4 @@
-"""exp_ddp —— 11 篇 DDP Lab。
+"""exp_ddp —— 12 篇 DDP Lab。
 
 ddp_common      进程组、固定样本序列数据集、模型构建、校验和工具
 ddp_train       torchrun 入口：single / ddp / gradsync / resume 四模式 + 故障注入

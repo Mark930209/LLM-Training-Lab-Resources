@@ -1,6 +1,6 @@
-# DevResources/Season1/10 —— Single GPU Performance Lab
+# DevResources/Season2/10 —— Single GPU Performance Lab
 
-对应文章：`Articles/Season1/10_显存省下来了，为什么 GPU 还是吃不满？.md`
+对应文章：`Articles/Season2/10_显存省下来了，为什么 GPU 还是吃不满？.md`
 
 ## 本篇解决什么问题
 
@@ -35,7 +35,7 @@
 | `exp_perf/` | 本篇包 | GPU 空洞度量 + 阶段打点 + 故障注入 |
 
 ```bash
-cp -r DevResources/Season1/10/project/exp_perf ~/llm-training-lab/
+cp -r DevResources/Season2/10/project/exp_perf ~/llm-training-lab/
 cd ~/llm-training-lab
 ```
 
@@ -46,7 +46,7 @@ cd ~/llm-training-lab
 
 # baseline：未优化端到端 + GPU 空洞
 ./.venv/bin/python -m exp_perf.perf_bench --mode baseline --steps 60 --warmup 8 --profile \
-    --repeats 3 --out results/Season1/10/rep_baseline.json
+    --repeats 3 --out results/Season2/10/rep_baseline.json
 
 # 故障注入（5 种）：让 GPU 等数据 / 等 CPU / 同步日志
 ./.venv/bin/python -m exp_perf.perf_bench --mode inject --fault slow_data --slow-data-ms 8 --profile --repeats 3 --out ...
@@ -60,14 +60,14 @@ cd ~/llm-training-lab
 ./.venv/bin/python -m exp_perf.perf_bench --mode optimize --opts workers,pin,prefetch,persistent,nonblock,sdpa,fused,setnone,compile --profile --repeats 3 --out ...
 
 # 报告（含 sanity 自检表）
-./.venv/bin/python -m exp_perf.perf_report results/Season1/10
+./.venv/bin/python -m exp_perf.perf_report results/Season2/10
 ```
 
 `--mode` 三选一：`baseline` / `inject` / `optimize`。`--fault` 可选 `slow_data` `heavy_cpu` `no_pin` `sync_log`。`--opts` 可组合 `workers` `pin` `prefetch` `persistent` `nonblock` `sdpa` `fused` `setnone` `compile` `ckpt` `accum`。`--repeats N` 同配置跑 N 轮取中位数。
 
 ## 结果文件
 
-`results/Season1/10/`（88 个）。**命名约定**：`rep_*` 是 3 轮中位数口径（文章只引用这些），无前缀的是单次跑（只用于历史踩坑叙述与趋势扫描）。
+`results/Season2/10/`（88 个）。**命名约定**：`rep_*` 是 3 轮中位数口径（文章只引用这些），无前缀的是单次跑（只用于历史踩坑叙述与趋势扫描）。
 
 核心证据链（`rep_baseline` / `rep_slow_data` / `rep_slow_data_workers`）：
 
