@@ -14,18 +14,52 @@
 ```text
 DevResources/
 ├── README.md                  # 本文件：资源包总说明
-└── Season0/
-    └── 02/                    # 对应《搭建一套可复用的大模型基础训练环境》
-        ├── README.md          # 本篇资源使用说明
-        ├── scripts/           # 通用脚本（环境初始化、体检、冒烟训练、复现性对照、数据采集、迁移）
-        └── project/           # 完整工程（common/ 可复现骨架 + exp_smoke 统一接口样板）
+├── Season0/
+│   └── 02/                    # 《搭建一套可复用的大模型基础训练环境》
+│       ├── README.md          # 本篇资源使用说明
+│       ├── scripts/           # 环境初始化、体检、冒烟训练、复现性对照、数据采集、迁移
+│       └── project/           # common/ 可复现骨架 + exp_smoke 统一接口样板
+└── Season1/
+    ├── 03/                    # SuperMiniGPT v0（project/ 含 common + exp_superminigpt + 语料）
+    ├── 04/                    # 可复用训练程序（project/ 含 common + exp_scale + 四大名著语料）
+    ├── 05/                    # 训练正确性体检（project/ 含 exp_debug）
+    ├── 06/                    # HF 接口契约（project/ 含 exp_hf）
+    ├── 07/                    # 显存去哪了（project/ 含 exp_mem）
+    ├── 08/                    # 显存优化六项交换（project/ 含 exp_opt）
+    ├── 09/                    # Attention Kernel Lab（project/ 含 exp_attn）
+    ├── 10/                    # 单卡性能（project/ 含 exp_perf）
+    └── 11/                    # DDP 正确性（project/ 含 exp_ddp）
 ```
+
+## 各篇包是累积的，不是独立的
+
+**这是使用本资源最重要的一条**。系列各篇的实验层层依赖：11 篇的 `exp_ddp` 要 import 06 篇的 `build_llama` 与 04 篇的 `CharTokenizer`，10 篇的 `exp_perf` 要复用 06 篇的 `contract_loss`。
+
+所以每篇的 `project/` 只含**本篇新增**的模块，不是完整可独立运行的工程。正确用法是按篇号顺序，把各篇 `project/` 下的模块累积拷进同一个工作目录：
+
+```bash
+# 02 篇建立工作目录与共享骨架
+mkdir -p ~/llm-training-lab && cd ~/llm-training-lab
+cp -r <DevResources>/Season0/02/project/common .
+cp -r <DevResources>/Season0/02/project/exp_smoke .
+
+# 之后每篇只加自己的模块
+cp -r <DevResources>/Season1/04/project/exp_scale .
+cp -r <DevResources>/Season1/06/project/exp_hf .
+cp -r <DevResources>/Season1/11/project/exp_ddp .
+# ……依此类推
+```
+
+02/03/04 篇的包里各自带了一份 `common/`（内容相同），是为了让前三篇能独立起步；从 05 篇起不再重复携带，直接复用已累积的 `common/`。
+
+每篇 README 的"前置"一节会列清本篇需要哪些前序模块。累积完成后，10 个 `exp_*` 模块全部可 import，各篇命令即可运行。
 
 ## 与文章的关系
 
 - 文章正文只贴**关键片段**（10~40 行/处）并解释思路。
 - 完整可运行版本在本资源包内，读者可直接执行。
 - 文章脱离资源包也能读懂；资源包脱离文章也能用（每包自带说明）。
+- 文章里的命令形如 `python -m exp_perf.perf_bench ...`，都是在累积后的工作目录根下执行的。
 
 ## 通用脚本约定
 

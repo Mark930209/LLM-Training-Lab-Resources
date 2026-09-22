@@ -18,9 +18,25 @@
 │   └── agent_diagnosis_prompt.md # 配合大模型 agent 排环境问题的 prompt 模板
 └── project/                   # common/ 可复现骨架 + exp_smoke 冒烟实验（统一接口样板）
     ├── README.md              # 工程使用说明
+    ├── requirements.lock.txt  # 完整依赖锁（57 包，全系列通用，含 06 篇起的 transformers）
     ├── common/                # reproducibility / config / logging / benchmark / metrics 五模块
     └── exp_smoke/             # config.yaml + run.py（run_experiment 公共接口最小实现）
 ```
+
+## 依赖锁：一份管全系列
+
+`project/requirements.lock.txt` 是**整个系列**的完整依赖锁（57 包），不只是本篇的。后续各篇引入新库时，锁文件会同步更新，读者始终按这一份装环境即可。
+
+```bash
+pip install -r project/requirements.lock.txt
+# 或用 uv（本工程的 venv 就是 uv 建的，venv 里没有 pip）
+uv pip install --python ./.venv/bin/python -r project/requirements.lock.txt
+```
+
+两个容易踩的点：
+
+- **本篇只需要 torch + numpy + pyyaml**，锁里其余的包是后续篇用的。一次装全可以省掉后面反复补依赖。
+- **06 篇起需要 `transformers` 与 `tokenizers`**。`results/Season0/02/requirements.lock.txt` 是本篇采集当时的历史快照（31 包，不含 transformers），只作为"环境可复现"的证据保留；装环境请用 `project/` 下这份完整的。
 
 ## 快速使用
 
