@@ -90,4 +90,5 @@ export RANK0_LAN_IP='<rank0-mirrored-lan-ip>'
 
 - 所有 `.sh` 脚本必须 **LF 换行**（经 `ssh 'bash -s'` 传入时 CRLF 会报 `$'\r': command not found`）。
 - 所有 `.ps1` 脚本必须 **UTF-8 带 BOM**（含中文时 Windows PowerShell 5.1 按 GBK 解析会乱码）。
+- 路由脚本的状态文件保存在用户本机 `%LOCALAPPDATA%\LLM-Training-Lab`；`-Undo` 也能读取旧版保存在脚本目录中的状态文件。
 - `nccl_cross.py` 的带宽口径：`dt` 是 iters 次迭代总时间，`algbw = algo_bytes * iters / dt / 1e9`；world=2 时 algbw == busbw。

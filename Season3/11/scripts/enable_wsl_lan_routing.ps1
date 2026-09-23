@@ -46,6 +46,7 @@ $ErrorActionPreference = 'Stop'
 $RuleName = 'LLM-Training-Lab WSL LAN routing'
 $StateDirectory = Join-Path $env:LOCALAPPDATA 'LLM-Training-Lab'
 $StateFile = Join-Path $StateDirectory 'wsl_lan_routing_state.json'
+$LegacyStateFile = Join-Path $PSScriptRoot 'wsl_lan_routing_state.json'
 $RegPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters'
 
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
@@ -97,10 +98,14 @@ if ($Undo) {
     Write-Step '撤销 WSL LAN 路由改动'
 
     $saved = $null
-    if (Test-Path $StateFile) {
-        $saved = Get-Content $StateFile -Raw | ConvertFrom-Json
+    $stateFileToUse = $StateFile
+    if (-not (Test-Path -LiteralPath $stateFileToUse) -and (Test-Path -LiteralPath $LegacyStateFile)) {
+        $stateFileToUse = $LegacyStateFile
+    }
+    if (Test-Path -LiteralPath $stateFileToUse) {
+        $saved = Get-Content -LiteralPath $stateFileToUse -Raw | ConvertFrom-Json
     } else {
-        Write-Warn2 "未找到状态文件 $StateFile，将按保守策略还原。"
+        Write-Warn2 '未找到状态文件，将按保守策略还原。'
     }
 
     Get-NetFirewallRule -DisplayName $RuleName -ErrorAction SilentlyContinue | ForEach-Object {
@@ -147,7 +152,7 @@ if ($Undo) {
         }
         Set-ItemProperty -Path $RegPath -Name IPEnableRouter -Value $saved.IPEnableRouterBefore -Type DWord
         Write-Ok "已还原 IPEnableRouter 为 $($saved.IPEnableRouterBefore)"
-        Remove-Item $StateFile -Force
+        Remove-Item -LiteralPath $stateFileToUse -Force
         Write-Ok "已删状态文件"
     } else {
         Set-ItemProperty -Path $RegPath -Name IPEnableRouter -Value 0 -Type DWord
@@ -194,7 +199,7 @@ if (-not (Test-Path $StateDirectory)) {
     New-Item -ItemType Directory -Path $StateDirectory -Force | Out-Null
 }
 $before | ConvertTo-Json -Depth 5 | Set-Content $StateFile -Encoding UTF8
-Write-Ok "改动前状态已存: $StateFile"
+Write-Ok '改动前状态已保存到本机专用目录。'
 
 # 1. 开启 IP 转发
 Write-Step '开启 IP 转发'
