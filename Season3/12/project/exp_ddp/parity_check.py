@@ -58,7 +58,7 @@ def compare(single: dict, ddp: dict, tol: float,
     # 第三级：跨进程加载两份最终参数，算误差量级
     sd_s = torch.load(single_params, map_location="cpu", weights_only=False)
     sd_d = torch.load(ddp_params, map_location="cpu", weights_only=False)
-    worst_abs, worst_rel, worst_key = 0.0, 0.0, ""
+    worst_abs, worst_rel, worst_key, worst_rel_key = 0.0, 0.0, "", ""
     n_diff = 0
     for k in sd_s:
         a, b = sd_s[k].float(), sd_d[k].float()
@@ -68,7 +68,9 @@ def compare(single: dict, ddp: dict, tol: float,
         if d_abs > 0:
             n_diff += 1
         if d_abs > worst_abs:
-            worst_abs, worst_rel, worst_key = d_abs, d_rel, k
+            worst_abs, worst_key = d_abs, k
+        if d_rel > worst_rel:
+            worst_rel, worst_rel_key = d_rel, k
     params_ok = worst_rel < tol
     checksum_same = single["final_checksum"] == ddp["final_checksum"]
 
@@ -92,6 +94,7 @@ def compare(single: dict, ddp: dict, tol: float,
             "max_abs_err": worst_abs,
             "max_rel_err": worst_rel,
             "worst_tensor": worst_key,
+            "worst_rel_tensor": worst_rel_key,
             "tol": tol, "match": params_ok,
             "final_checksum_identical": checksum_same,
             "note": ("checksum 相同则参数逐位一致；不同但 rel err 在容差内，"

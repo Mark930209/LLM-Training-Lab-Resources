@@ -35,7 +35,9 @@ AMP 说明：本篇全程 fp32。混合精度会引入 GradScaler 跳步等额�
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import socket
 import sys
 import time
 from pathlib import Path
@@ -150,7 +152,7 @@ def train_loop(args, rank: int, world: int, device: str):
         args, rank, world)
 
     model = build_model(vocab, args.seq, device)
-    init_checksum = param_checksum(model)
+    pre_broadcast_checksum = param_checksum(model)
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr,
                             weight_decay=0.1, betas=(0.9, 0.95))
@@ -158,6 +160,7 @@ def train_loop(args, rank: int, world: int, device: str):
     ddp_model = model
     if world > 1:
         ddp_model = nn.parallel.DistributedDataParallel(model)
+    init_checksum = param_checksum(model)
 
     reduction_fault = args.fault == "sum_reduction"
     history = {"local_loss": [], "global_loss": [], "val_loss": [],
@@ -255,8 +258,12 @@ def train_loop(args, rank: int, world: int, device: str):
         "backend": args.backend,
         "world_size": world,
         "rank": rank,
+        "node_fingerprint": hashlib.sha256(socket.gethostname().encode()).hexdigest()[:16],
         "device": device,
-        "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
+        "gpu": torch.cuda.get_device_name(torch.cuda.current_device()) if torch.cuda.is_available() else "cpu",
+        "cuda_device_index": torch.cuda.current_device() if torch.cuda.is_available() else None,
+        "corpus_sha256": hashlib.sha256(
+            (Path(args.data_dir) / "corpus_large.txt").read_bytes()).hexdigest(),
         "torch": torch.__version__,
         "config": {"hidden": 384, "layers": 6, "heads": 6, "head_dim": 64,
                    "seq": args.seq, "global_batch": args.global_batch,
@@ -264,6 +271,7 @@ def train_loop(args, rank: int, world: int, device: str):
                    "lr": args.lr, "warmup": args.warmup,
                    "data_seed": args.data_seed, "seed": args.seed},
         "params_m": round(sum(p.numel() for p in model.parameters()) / 1e6, 2),
+        "pre_broadcast_checksum": pre_broadcast_checksum,
         "init_checksum": init_checksum,
         "final_checksum": param_checksum(model),
         "final_l2": round(param_l2(model), 4),

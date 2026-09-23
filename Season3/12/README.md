@@ -6,12 +6,12 @@
 
 把单卡脚本套上 `torchrun` 和 DDP，程序能启动并不代表训练等价。数据、梯度、batch、随机数、checkpoint 要怎样处理，双卡结果才能与单卡基线对齐？
 
-核心判断：DDP 的本质是每个 rank 保留完整模型、读取不同数据，再把梯度同步成一致结果。正确性首先取决于全局 batch 和数据分片语义，速度是下一篇（13）才讨论的问题。
+核心判断：DDP 的本质是每个 rank 保留完整模型、读取不同数据，再把梯度同步成一致结果。正确性首先取决于全局 batch 和数据分片语义，速度由 14 篇测量。
 
 ## 包内容
 
 ```text
-11/
+12/
 ├── README.md                  # 本文件
 └── project/
     └── exp_ddp/
@@ -19,6 +19,7 @@
         ├── ddp_train.py         # torchrun 入口：single/ddp/gradsync/resume 四模式 + 5 个故障注入
         ├── sampler_audit.py     # DistributedSampler 分片审计（纯 CPU）：覆盖率/重复/set_epoch
         ├── parity_check.py      # 单卡 vs 双卡三级对齐门禁（一条命令）
+        ├── xnode_check.py       # 单卡 vs 两机 NCCL：节点、设备、语料、轨迹与参数核验
         ├── fail_modes_ddp.py    # 5 个故障的文档与预期偏差表
         ├── analyze_faults.py    # 故障偏差 vs 基线的汇总分析（采集期工具）
         └── analyze_noise_floor.py # 噪声底测量：等价配置两次跑的参数差
@@ -42,20 +43,22 @@ cd ~/llm-training-lab
 
 ## 传输选型（重要）
 
-**主实验用 gloo，不用 nccl**，原因是实测约束：
+**主实验是两机 NCCL DDP**：两台 WSL 主机各有一张 GPU，每 rank 独占一张卡，固定全局 batch 16 和 30 步，用 `xnode_check` 对单卡与两个 DDP rank 落盘数据逐项验收。已归档 `nccl_xnode_parity_30.json` 的 `overall_pass` 为 true。两台机器的端口、地址与接口由运行时环境指定，不写入跟踪文件。
+
+只有一张 GPU 时可用 gloo 进行单机预检：
 
 - NCCL 拒绝单卡 2 rank（`ncclInvalidUsage`），要求每 rank 独占一张 GPU。
 - gloo 能驱动 CUDA 模型做 DDP：前向反向在 GPU 上真实跑，梯度 all-reduce 经 CPU 中转。
-- all-reduce 的数学不依赖后端，正确性结论对 NCCL 同样成立。速度不是本篇主题。
+- gloo 的单机验证不能代替独立节点、设备和 NCCL 后端的两机验收。
 
-**这意味着读者只有一张消费级卡也能复现本篇全部正确性结论。**
+单卡能复现算法和 sampler 审计，不能复现双卡训练的环境与性能结论。
 
 ## 快速使用
 
 ```bash
 cd ~/llm-training-lab
 
-# 三级对齐门禁（一条命令跑单进程 + 2-rank DDP 并比对）
+# 旧单卡 gloo 预检（一条命令跑单进程 + 2-rank DDP 并比对）
 ./.venv/bin/python -m exp_ddp.parity_check --steps 30 --global-batch 16 \
     --out results/Season3/12/parity.json
 
@@ -82,23 +85,25 @@ cd ~/llm-training-lab
 
 ## 结果文件
 
-`results/Season3/12/`（28 个）。核心：
+`results/Season3/12/`。两机与历史单机记录分别保留：
 
 | 文件 | 内容 |
 |---|---|
-| `parity.json` | 三级对齐：init_checksum 逐位相同、loss 轨迹差 1e-6、参数 rel err 4.33e-5，overall PASS |
+| `nccl_xnode_single_30.json` / `nccl_xnode_rank0_30.json` / `nccl_xnode_rank1_30.json` | 单卡与两机 NCCL 两个 rank 的原始 30 步记录 |
+| `nccl_xnode_parity_30.json` | 节点/设备/语料/初始权重/两 rank 轨迹门禁，通过；单卡对 DDP 逐张量最大相对误差 4.3223e-5（容差 1e-4） |
+| `parity.json` | 历史 gloo 预检：init_checksum 相同、loss 轨迹差约 1e-6；旧脚本的 4.33e-5 只对应最大绝对差所在张量，不是全模型逐张量最大相对误差 |
 | `gradsync.json` / `_rank1.json` | DDP 梯度 vs 单进程全 batch 梯度差 1.64e-7，证明同步在 backward 中 |
 | `sampler_audit.json` | 覆盖率 1.0、重复 0、同步零重叠；set_epoch 顺序逐 epoch 变化 |
 | `fault_deviation.json` | 各故障 loss 轨迹偏差 vs 噪声底 |
 | `resume_parity.json` | 分段跑 vs 连续跑参数差 2.79e-6，PASS |
-| `xnode_nccl_attempt.json` | 跨机 NCCL 失败记录（rendezvous 通、bootstrap 不通） |
+| `xnode_nccl_attempt.json` | 早期 NAT 环境的失败记录，现已由上述两机训练证据取代 |
 | `ddp_none` / `single_none` / `fault_*` / `continuous_30` 等 | 各组训练结果 |
 
 ## 等价判据：容差比对，不是 checksum 相等
 
-**这是本篇最重要的方法论修正**。配置完全相同的两次 DDP 跑（`ddp_none` 与 `continuous_30`），final loss 六位小数一致，但 `final_checksum` 不同。根因是 GPU 原子归约的非确定性：参数差 ULP 量级（实测噪声底 max_rel_err = 2.99e-6），sha256 就变。
+配置完全相同的两次历史 gloo DDP 跑（`ddp_none` 与 `continuous_30`），final loss 六位小数一致，但 `final_checksum` 不同。旧校验器记录的 2.99e-6 只针对最大绝对差所在张量，不是完整噪声分布；参数低位差异的来源尚未单独定位。
 
-所以 checksum 相同必等价、不同未必不等价。最终判据是**容差参数比对**（max_rel_err < 1e-4）。噪声底是判断"偏离是否显著"的标尺：静默故障偏差 0.09~0.19，比噪声底高 5 个数量级。
+checksum 相同提供了逐位相同的强信号；不同不等于训练失败。新两机门禁逐张量计算最大相对误差并检查 1e-4 容差，历史噪声值只作粗略量级参考。静默故障的 loss 偏差 0.09~0.19，远大于这些旧对照中的数值误差。
 
 ## 五个故障（四个静默）
 
@@ -114,7 +119,6 @@ cd ~/llm-training-lab
 
 ## 已知边界
 
-- 本篇 2 个 rank 共享一张 3070（gloo），生产是多卡多机（NCCL）。all-reduce 数学一致，但通信速度、bucket 策略、overlap 行为不同（14 篇）。
-- wall_s 数字（DDP 7.75s 对单进程 6.51s）只说明"共享单卡时 DDP 更慢"，**不能外推为"DDP 比单卡慢"**。
-- 跨机 NCCL 没打通：两个 WSL2 NAT 互相隔离，SSH 隧道只覆盖 rendezvous 端口，覆盖不了 NCCL 动态协商的数据通道。详见 `xnode_nccl_attempt.json` 与文章第 7 章。有多卡环境的读者可直接 `--backend nccl` 复现。
+- 新两机 NCCL 记录来自异构 3070/4090、单次运行，不代表同型号多卡；每 rank 训练墙钟也不是全局同步的完整作业计时，性能比较以 14 篇正式 benchmark 为准。
+- 旧 gloo 的 wall_s（DDP 7.75s 对单进程 6.51s）只说明共享单卡的行为。早期 NAT 失败记录属于排查历史，不是当前状态。
 - 全程 fp32 不用 AMP：GradScaler 跳步会引入额外状态，让逐位对齐判据变模糊。

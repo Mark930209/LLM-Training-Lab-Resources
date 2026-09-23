@@ -9,8 +9,7 @@
 2. 模型复用 10 篇的 build_llama（同一个 12.93M 小 Llama），char 分词，
    四大名著语料，保证从单卡基线平滑过渡。
 
-3. param_checksum：对所有参数做确定性哈希，单卡/双卡跑完比对，
-   是"训练等价"最硬的证据（比 loss 曲线更难蒙混）。
+3. param_checksum：对所有参数做确定性哈希；最终哈希不同时仍需逐张量容差比较。
 
 4. setup_dist：gloo/nccl 统一入口。gloo 用于单卡 2-rank（NCCL 拒绝同卡多 rank），
    nccl 用于跨机真双卡。
@@ -40,7 +39,7 @@ def setup_dist(backend: str = "gloo") -> tuple[int, int, int]:
     由 torchrun 注入 RANK / LOCAL_RANK / WORLD_SIZE 环境变量。
     backend 选择（实测）：
       - gloo：单卡也能起 2 rank，能驱动 CUDA 模型做 DDP（梯度走 CPU 中转），
-        正确性与 nccl 一致。本篇主传输。
+        用于单卡预检；跨机 NCCL 需另外验收。
       - nccl：要求每 rank 独占一张 GPU，单卡 2 rank 会报 ncclInvalidUsage。
         跨机真双卡才用。
     """

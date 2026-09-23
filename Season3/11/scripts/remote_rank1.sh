@@ -10,5 +10,5 @@ NCCL_SOCKET_IFNAME=eth0 GLOO_SOCKET_IFNAME=eth0 NCCL_IB_DISABLE=1 \
 NCCL_DEBUG=WARN \
 ~/miniforge3/bin/python -m torch.distributed.run \
   --nnodes=2 --node_rank=1 --nproc_per_node=1 \
-  --master_addr=10.66.8.189 --master_port=29501 nccl_cross.py \
+  --master_addr=192.168.0.189 --master_port=29501 nccl_cross.py \
   2>&1 | tee rank1_mirrored.log

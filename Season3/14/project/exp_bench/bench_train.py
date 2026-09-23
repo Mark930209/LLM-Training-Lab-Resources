@@ -16,6 +16,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import socket
+import statistics
 import time
 
 import torch
@@ -84,7 +87,9 @@ def train_loop(args, ddp: bool) -> dict:
 
     steps = []
     it = iter(loader)
+    measured_start = time.perf_counter()
     for s in range(args.steps):
+        wall_start = time.perf_counter()
         timer.start()
         x, y = next(it)
         x, y = x.to(device), y.to(device)
@@ -114,10 +119,12 @@ def train_loop(args, ddp: bool) -> dict:
         if device == "cuda":
             torch.cuda.synchronize()  # events 必须完成后才能 elapsed_time
         timer.finish()
-        steps.append(dict(step=s, **timer.record))
+        steps.append(dict(step=s, **timer.record,
+                          wall_ms=(time.perf_counter() - wall_start) * 1000))
 
     if dist.is_initialized():
         dist.barrier()
+    measured_wall_s = time.perf_counter() - measured_start
 
     total_ms = [st["total_ms"] for st in steps]
     total_ms.sort()
@@ -127,6 +134,9 @@ def train_loop(args, ddp: bool) -> dict:
         "backend": args.backend,
         "world": world,
         "rank": rank,
+        "node_fingerprint": hashlib.sha256(socket.gethostname().encode()).hexdigest()[:16],
+        "gpu": torch.cuda.get_device_name(torch.cuda.current_device()) if device == "cuda" else "cpu",
+        "torch": torch.__version__,
         "config": {"hidden": args.hidden, "layers": args.layers, "seq": args.seq,
                    "global_batch": args.global_batch, "steps": args.steps,
                    "warmup": warmup_steps, "straggler_ms": args.straggler_ms},
@@ -138,6 +148,9 @@ def train_loop(args, ddp: bool) -> dict:
         "total_ms_p95": total_ms[int(n * 0.95) - 1 if n > 1 else 0],
         "total_ms_mean": sum(total_ms) / n,
         "tok_per_s": args.global_batch * args.seq / (total_ms[n // 2] / 1000),
+        "wall_ms_median": statistics.median(st["wall_ms"] for st in steps),
+        "measured_wall_s": measured_wall_s,
+        "tok_per_s_wall": args.global_batch * args.seq * args.steps / measured_wall_s,
     }
     print(f"[rank{rank}] {'ddp' if ddp else 'single'} w={world} median={payload['total_ms_median']:.1f}ms "
           f"tok/s={payload['tok_per_s']:.0f} params={payload['params_m']:.2f}M")
@@ -164,7 +177,7 @@ def main() -> None:
 
     payload = train_loop(args, ddp=(args.mode == "ddp"))
     if args.out:
-        write_report(args.out, payload)
+        write_report(args.out, payload, all_ranks=True)
 
 
 if __name__ == "__main__":

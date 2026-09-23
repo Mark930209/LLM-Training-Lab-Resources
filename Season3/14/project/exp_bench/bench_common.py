@@ -123,10 +123,13 @@ def comm_ms_estimate(params_bytes: int, world: int, bandwidth_gbps: float) -> fl
 
 # ---------------------------------------------------------------- 报告
 
-def write_report(path: str, payload: dict) -> None:
-    if int(os.environ.get("RANK", 0)) != 0:
+def write_report(path: str, payload: dict, all_ranks: bool = False) -> None:
+    rank = int(os.environ.get("RANK", 0))
+    if rank != 0 and not all_ranks:
         return
     p = Path(path)
+    if rank != 0:
+        p = p.with_name(f"{p.stem}_rank{rank}{p.suffix}")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"[rank0] written {p}")

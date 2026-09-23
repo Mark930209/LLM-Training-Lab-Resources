@@ -6,7 +6,7 @@ import socket
 s = socket.socket()
 s.settimeout(8)
 try:
-    s.connect(('10.66.8.189', 29802))
+    s.connect(('192.168.0.189', 29802))
     s.send(b'PING-FROM-4090')
     print('recv:', s.recv(64))
     print('RESULT: REMOTE_TO_LOCAL_WSL_DIRECT_OK')

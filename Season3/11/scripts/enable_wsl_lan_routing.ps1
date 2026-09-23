@@ -14,7 +14,7 @@
     本脚本在**每台 Windows 上各跑一次**，参数不同。
 
 .PARAMETER PeerWindowsIp
-    对端 Windows 的 LAN IP（例如本机跑时填远端的 10.66.8.126）。
+    对端 Windows 的 LAN IP（例如本机跑时填远端的 192.168.0.126）。
 
 .PARAMETER PeerWslSubnet
     对端 WSL 的 NAT 子网 CIDR（例如 172.19.224.0/20）。
