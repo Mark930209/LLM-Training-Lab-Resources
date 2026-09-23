@@ -14,10 +14,10 @@
     本脚本在**每台 Windows 上各跑一次**，参数不同。
 
 .PARAMETER PeerWindowsIp
-    对端 Windows 的 LAN IP（例如本机跑时填远端的 192.168.0.126）。
+    对端 Windows 的 LAN IP。
 
 .PARAMETER PeerWslSubnet
-    对端 WSL 的 NAT 子网 CIDR（例如 172.19.224.0/20）。
+    对端 WSL 的 NAT 子网 CIDR。
     在对端机器上用 `wsl hostname -I` 加前缀长度确认。
 
 .PARAMETER Undo
@@ -44,7 +44,8 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $RuleName = 'LLM-Training-Lab WSL LAN routing'
-$StateFile = Join-Path $PSScriptRoot 'wsl_lan_routing_state.json'
+$StateDirectory = Join-Path $env:LOCALAPPDATA 'LLM-Training-Lab'
+$StateFile = Join-Path $StateDirectory 'wsl_lan_routing_state.json'
 $RegPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters'
 
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
@@ -189,6 +190,9 @@ $before = [pscustomobject]@{
     Timestamp            = (Get-Date).ToString('o')
 }
 if (-not $before.IPEnableRouterBefore) { $before.IPEnableRouterBefore = 0 }
+if (-not (Test-Path $StateDirectory)) {
+    New-Item -ItemType Directory -Path $StateDirectory -Force | Out-Null
+}
 $before | ConvertTo-Json -Depth 5 | Set-Content $StateFile -Encoding UTF8
 Write-Ok "改动前状态已存: $StateFile"
 

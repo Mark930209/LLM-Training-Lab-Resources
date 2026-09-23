@@ -56,6 +56,26 @@ hostAddressLoopback=true
 
 改完执行 `wsl --shutdown` 重启 WSL 生效。干净环境（防火墙开启）下还需放行 Hyper-V 防火墙入站，命令见文章 §4.5。
 
+## 地址参数
+
+脚本不预置实验机器的 LAN 或 WSL 地址。运行前按自己的网络填写地址，避免把本地地址写进共享资源：
+
+| 参数 | 用途 | 使用位置 |
+|---|---|---|
+| `RANK0_LAN_IP` | rank0 mirrored 后的 LAN 地址 | 两侧 NCCL 启动脚本 |
+| `REMOTE_WSL_IP` | rank1 mirrored 后的 WSL 地址 | `local_connect_probe.sh` |
+| `LOCAL_WSL_IP` | rank0 mirrored 后的 WSL 地址 | `remote_connect_probe.sh` |
+| `--host` | TCP 服务端的 LAN 地址 | `lan_throughput.py client` |
+| `-PeerWindowsIp` / `-PeerWslSubnet` | 对端 Windows 地址与 WSL NAT 子网 | `enable_wsl_lan_routing.ps1` |
+
+例如在两侧 shell 中设置各自的 rank0 地址后再运行 NCCL 脚本：
+
+```bash
+export RANK0_LAN_IP='<rank0-mirrored-lan-ip>'
+```
+
+探针分别使用对端的 mirrored 地址。吞吐客户端通过 `--host '<server-lan-ip>'` 指定服务端；路由脚本的两个地址参数也必须替换为当前实验值。
+
 ## 复现顺序
 
 1. `probe_remote_node.sh`：确认远端 GPU / torch / NCCL 可用（`ssh <host> 'bash -s' < probe_remote_node.sh`）

@@ -2,7 +2,7 @@
 
 用法：
   服务端（gpu_office）:  python lan_throughput.py server --port 29600
-  客户端（本机 WSL）  :  python lan_throughput.py client --host 192.168.0.91 --port 29600
+    客户端（本机 WSL）  :  python lan_throughput.py client --host <rank1-lan-ip> --port 29600
 """
 
 import argparse
@@ -67,11 +67,13 @@ def client(host, port, mb):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("role", choices=["server", "client"])
-    p.add_argument("--host", default="192.168.0.91")
+    p.add_argument("--host", help="TCP server LAN address; required for client")
     p.add_argument("--port", type=int, default=29600)
     p.add_argument("--mb", type=int, default=512)
     a = p.parse_args()
     if a.role == "server":
         server(a.port)
+    elif not a.host:
+        p.error("client requires --host <server-lan-ip>")
     else:
         client(a.host, a.port, a.mb)
