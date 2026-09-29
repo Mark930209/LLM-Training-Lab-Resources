@@ -1,0 +1,83 @@
+# exp_arch 全链路配置 —— 19 篇 Modern Architecture Lab
+#
+# 叙事校准（PROGRESS 命题记录）：03 篇 SuperMiniGPT 已内置 RMSNorm/SwiGLU/RoPE，
+# 本篇是"把现代骨架逐项关掉/换回经典档做对照"，不是"从经典升级到现代"。
+# 基准格 modern = 03 篇骨架（rms + pre + swiglu + rope + mha）。
+#
+# 词表固定：17 篇两域并集 char 级词表 6120（隔离架构效应，词表是 18 篇的变量）。
+# 语料与评测集切分复用 17 篇 exp_recipe.corpus（同一把尺子，指纹可跨篇核对）。
+
+corpus:
+  nl_path: "/mnt/d/DocProjects/LearnLLMFromDraft/DevResources/Season1/04/project/exp_scale/data/corpus_large.txt"
+  nl_chunk_chars: 4000
+
+base:
+  layers: 6
+  heads: 6
+  seq_len: 256
+  vocab_expect: 6120        # 与 17 篇一致；不符即报错（口径锁）
+
+train:
+  hidden: 384               # 基准格 hidden（等参数量对照的目标参数由此格算出）
+  batch_size: 16
+  token_budget: 2000000     # 与 17/18 篇同预算，488 步
+  lr: 0.0003
+  weight_decay: 0.1
+  warmup_frac: 0.1
+  seed: 20260925
+  device: "cuda"
+  # 稳定性对照用的偏大学习率（提纲：测稳定性组件在大 LR 下的作用）
+  lr_stress: 0.003
+
+# 训练语料：17 篇基准配方（nl50 + minhash08 + 开过滤）制备一次，全格共用。
+# 架构是对照变量，数据必须完全一致。
+recipe:
+  name: "nl50_dedup08_q"
+  nl_ratio: 0.5
+  dedup: "minhash08"
+  quality: true
+  char_budget: 1500000
+
+# 消融矩阵：每格只动一个轴（基准 modern 之外的 10 个单变量格）。
+# hidden: null = 等参数量模式（solve_hidden_for_params 反解到基准总参数）；
+#          给定值 = 等算力/自然参数模式（直接训，参数量如实报告）。
+matrix:
+  - {name: "modern",        norm_type: "rms",   norm_pos: "pre",  ffn_type: "swiglu", pos_enc: "rope",    attn_type: "mha", hidden: 384}
+  # 轴 1：归一化类型（LayerNorm 带 bias 多参数，等参数量下 hidden 会被压小）
+  - {name: "layernorm",     norm_type: "layer", norm_pos: "pre",  ffn_type: "swiglu", pos_enc: "rope",    attn_type: "mha", hidden: null}
+  # 轴 2：norm 位置（参数量不变，post-norm 深层稳定性对照）
+  - {name: "postnorm",      norm_type: "rms",   norm_pos: "post", ffn_type: "swiglu", pos_enc: "rope",    attn_type: "mha", hidden: 384}
+  # 轴 3：激活与扩展比（GELU 4x 两矩阵 vs SwiGLU 8/3x 三矩阵，参数量近似持平）
+  - {name: "gelu4x",        norm_type: "rms",   norm_pos: "pre",  ffn_type: "gelu",   pos_enc: "rope",    attn_type: "mha", hidden: null}
+  # 轴 3b：失败案例格——换 SwiGLU 时沿用 4x 扩展比，不控参数量（对照不公平演示）
+  - {name: "swiglu4x_fair_fail", norm_type: "rms", norm_pos: "pre", ffn_type: "swiglu", pos_enc: "rope",  attn_type: "mha", hidden: 384, ffn_expansion: 4.0}
+  # 轴 4：位置编码（learned 绝对位置多 seq_len×hidden 参数）
+  - {name: "learned_pos",   norm_type: "rms",   norm_pos: "pre",  ffn_type: "swiglu", pos_enc: "learned", attn_type: "mha", hidden: null}
+  # 轴 5：注意力形式（GQA/MQA 减 k/v 参数与 KV cache）
+  - {name: "gqa",           norm_type: "rms",   norm_pos: "pre",  ffn_type: "swiglu", pos_enc: "rope",    attn_type: "gqa", hidden: null}
+  - {name: "mqa",           norm_type: "rms",   norm_pos: "pre",  ffn_type: "swiglu", pos_enc: "rope",    attn_type: "mqa", hidden: null}
+  # 全经典格（四项同时换回经典档，检验"收益不可加"）
+  - {name: "classic_all",   norm_type: "layer", norm_pos: "post", ffn_type: "gelu",   pos_enc: "learned", attn_type: "mha", hidden: null}
+
+# 等算力对照：固定每步 FLOPs 预算（step_flops 解析式），modern 格为基准，
+# 对参数量差异大的格（layernorm/gelu4x/learned_pos/gqa/mqa/classic_all）
+# 用 token_budget 缩放把总 FLOPs 拉平后重训。缩放系数由 pipeline 计算并写入结果。
+equal_flops:
+  enabled: true
+  baseline: "modern"
+  # 总 FLOPs 容差：缩放后与基准差 <2% 视为拉平
+  tolerance: 0.02
+
+# 稳定性对照（提纲：QK-norm/z-loss/logit soft-cap 在偏大 LR 下的作用）
+# 第一阶段先跑"大 LR 下哪些格发散"，稳定性组件实现视发散情况决定（避免过度工程）
+stress:
+  enabled: true
+  lr: 0.003
+  # 只跑三格：modern / postnorm（预期最不稳）/ classic_all
+  cells: ["modern", "postnorm", "classic_all"]
+
+# 噪声底测量（noise 模式）：modern 格固定配置只换 seed。
+# 核心判断"多数单变量质量差异在噪声带内"的前提是噪声带被实测过；
+# 单变量格困惑度差异小于噪声带极差时不得声称架构效应。
+noise:
+  seeds: [20260925, 1001, 1002, 1003]

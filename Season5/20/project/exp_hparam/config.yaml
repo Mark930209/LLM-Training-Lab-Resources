@@ -1,0 +1,127 @@
+# exp_hparam 全链路配置 —— 20 篇 HParam Lab
+#
+# 架构固定用 19 篇 modern 基线（rms + pre + swiglu 8/3x + rope + mha，heads=6），
+# 只变超参与宽度。数据底座与 17/18/19 篇完全一致（同语料、同 17 篇基准配方、
+# 同 char 级词表 6120、同评测集切分，指纹可跨篇核对）。
+#
+# 宽度档位必须是 2×heads=12 的倍数（RoPE 要求 head_dim 为偶数，19 篇踩坑），
+# 所以规模档用 252/384/516/768，外推档 1032，不用 256/512/1024。
+#
+# 结果 JSON 一律 --out 直写 /mnt/d 挂载路径（18 篇教训：WSL /tmp 不可靠）。
+
+corpus:
+  nl_path: "/mnt/d/DocProjects/LearnLLMFromDraft/DevResources/Season1/04/project/exp_scale/data/corpus_large.txt"
+  nl_chunk_chars: 4000
+
+base:
+  layers: 6
+  heads: 6
+  seq_len: 256
+  vocab_expect: 6120        # 与 17 篇一致；不符即报错（口径锁）
+  arch:                     # 19 篇 modern 五轴，全部子实验固定不变
+    norm_type: "rms"
+    norm_pos: "pre"
+    ffn_type: "swiglu"
+    pos_enc: "rope"
+    attn_type: "mha"
+
+# 训练语料：17 篇基准配方（nl50 + minhash08 + 开过滤），与 19 篇同一份。
+# 超参是对照变量，数据必须完全一致。
+recipe:
+  name: "nl50_dedup08_q"
+  nl_ratio: 0.5
+  dedup: "minhash08"
+  quality: true
+  char_budget: 1500000
+
+train:
+  hidden: 384               # 基准宽度（19 篇 modern）
+  batch_size: 16
+  lr: 0.0003
+  weight_decay: 0.1
+  warmup_frac: 0.1
+  decay: "cosine"           # 17 篇 _lr_at 同款
+  seed: 20260926
+  device: "cuda"
+  diverge_thresh: 20.0      # loss NaN 或超过此值判发散，提前停省时间
+
+# 实测吞吐基准（19 篇 train REAL，用于 plan 估算）
+throughput_ref:
+  hidden: 384
+  tok_per_sec: 54682
+
+# ---- 子实验矩阵（完整版 56 格，plan 估算约 30 分钟）----
+
+# 0. 噪声带：基准配置 4 seeds（19 篇判读纪律——单变量差异 < 噪声带 → 测不出差异）
+noise:
+  enabled: true
+  token_budget: 1000000
+  seeds: [20260926, 1001, 1002, 1003]
+
+# 1. LR range test：单次训练内 LR 指数上升，记录 loss-lr 曲线找可用区间
+lr_range_test:
+  enabled: true
+  token_budget: 200000
+  lr_min: 0.00003
+  lr_max: 0.03
+
+# 2. LR × batch sweep：检验平方根缩放 vs 线性缩放（24 格）
+lr_batch_sweep:
+  enabled: true
+  token_budget: 1000000
+  batch_sizes: [8, 16, 32, 64]
+  lr_grid: [0.0001, 0.0002, 0.0003, 0.0006, 0.001, 0.002]
+
+# 3. warmup 比例 × 衰减策略（9 格，lr/batch 用基准）
+warmup_decay:
+  enabled: true
+  token_budget: 1000000
+  warmup_ratios: [0.02, 0.05, 0.1]
+  decay_modes: ["cosine", "linear", "constant"]
+
+# 4. 梯度累积等效边界（4 格）：同有效 batch 32 的三种拆法 + 有效 batch 8 对照
+grad_accum:
+  enabled: true
+  token_budget: 1000000
+  cases:
+    - {name: "b32_a1", batch_size: 32, accum: 1}
+    - {name: "b16_a2", batch_size: 16, accum: 2}
+    - {name: "b8_a4",  batch_size: 8,  accum: 4}
+    - {name: "b8_a1",  batch_size: 8,  accum: 1}
+
+# 5. scaling law：4 档宽度拟合 L(N)=a·N^b 并外推到 1032（token 预算 2M）
+scaling_law:
+  enabled: true
+  token_budget: 2000000
+  hidden_sizes: [252, 384, 516, 768]
+
+# 6. 等算力 N/D 分配（C≈6ND）：固定 FLOPs，四档宽度，D 由 D=C/(6N) 反推。
+# N 用**非 embedding 参数**口径（Chinchilla 惯例，18 篇 _non_emb_params 同款）：
+# vocab 6120 的 tied embedding 在几万参数级模型里会占主导，用总参数会把
+# "模型规模"这个自变量污染成"词表规模"。
+# 直接指定 hidden 档位而非目标 D/N 比：hidden 须对齐 2×heads=12（RoPE 偶数
+# head_dim），按比值反解会让相邻两档塌到同一个 hidden，浪费一格。
+# flops_budget 受语料容量约束：配方 char_budget 1.5M ≈ 1.5M token，
+# 最大 D（hidden 48 档 6.0M）= 4 epoch，再大就是过拟合伪影 → C=6e12。
+# 实测 D/N 落在 2.3~36，覆盖 Chinchilla(20) 两侧。
+# 模型规模落在 16 万~66 万非 embedding 参数档，是消费级单卡的真实边界，
+# 结论标 SCALED（关系形态可参考，绝对值不可直接外推到大模型）。
+compute_budget:
+  enabled: true
+  flops_budget: 6.0e+12
+  hidden_sizes: [48, 60, 72, 96]
+
+# 7. muP 风格宽度迁移简化验证（8 格）：252/516 两档 × 4 档 LR，
+#    对照 384 档最优 LR 的三种迁移规则（直搬 / 1/width / 1/sqrt(width)）
+mup:
+  enabled: true
+  token_budget: 1000000
+  hidden_sizes: [252, 516]
+  lr_grid: [0.0001, 0.0003, 0.0006, 0.001]
+
+# 8. 预测更大一档：hidden 1032，用 sweep 384 档最优 LR 按 1/width 规则缩放
+#    预测 vs 直搬基准 LR 对照，记录预测误差（2 格）
+predict_larger:
+  enabled: true
+  hidden: 1032
+  token_budget: 2000000

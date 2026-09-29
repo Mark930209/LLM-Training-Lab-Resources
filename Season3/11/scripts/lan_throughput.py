@@ -1,7 +1,7 @@
 """LAN TCP 吞吐探测：一端 listen，一端 connect 并推数据。
 
 用法：
-  服务端（gpu_office）:  python lan_throughput.py server --port 29600
+  服务端（LAN_BENCH_SERVER）:  python lan_throughput.py server --port 29600
     客户端（本机 WSL）  :  python lan_throughput.py client --host <rank1-lan-ip> --port 29600
 """
 

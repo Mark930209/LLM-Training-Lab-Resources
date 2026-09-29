@@ -1,0 +1,50 @@
+# exp_tokenizer 全链路配置 —— 18 篇 Tokenizer Lab
+#
+# 语料复用 17 篇两域（四大名著 + Python 标准库），评测集永不参与 tokenizer 训练。
+
+corpus:
+  nl_path: "/mnt/d/DocProjects/LearnLLMFromDraft/DevResources/Season1/04/project/exp_scale/data/corpus_large.txt"
+  nl_chunk_chars: 4000
+  # 训练 tokenizer 只用 train 池；eval 指纹与 17 篇一致，保证跨篇可比
+
+sweep:
+  algos: ["bpe", "unigram"]
+  vocab_sizes: [8000, 16000, 32000, 64000]
+  digit_strategies: ["merge", "single"]
+  work_dir: "/tmp/tok18"
+  # 静态指标评测文本：从两域 eval 集各取一段（tokenizer 没见过）
+  metric_sample_chars: 200000
+  low_freq_threshold: 5
+
+# 训练侧验证（第二阶段）：固定 token 预算，对照词表档位对显存/吞吐/效果的影响
+# 注意：work_dir 在 WSL /tmp，跨 WSL 重启可能丢失（首轮 sweep 结果即因此丢失）；
+# 结果 JSON 一律 --out 直写 /mnt/d 挂载路径。词表产物丢失时 train 模式自动重训。
+train:
+  hidden: 384
+  layers: 6
+  heads: 6
+  seq_len: 256
+  batch_size: 16
+  token_budget: 2000000
+  lr: 0.0003
+  weight_decay: 0.1
+  warmup_frac: 0.1
+  seed: 20260924
+  device: "cuda"
+  # 固定总参数预算的目标值 = 17 篇 10M 档实测参数量（含词表 6120×384）
+  fixed_param_target: 12971904
+  # 训练侧配方与 17 篇基准格同口径：本篇变量是词表，配方固定隔离词表效应
+  recipe:
+    name: "nl50_dedup08_q"
+    nl_ratio: 0.5
+    dedup: "minhash08"
+    quality: true
+    char_budget: 1500000
+  # 训练矩阵：BPE 四档全跑（主轴），Unigram 取首尾两档做算法对照
+  matrix:
+    - {algo: "bpe",     vocab: 8000,  digit: "merge"}
+    - {algo: "bpe",     vocab: 16000, digit: "merge"}
+    - {algo: "bpe",     vocab: 32000, digit: "merge"}
+    - {algo: "bpe",     vocab: 64000, digit: "merge"}
+    - {algo: "unigram", vocab: 8000,  digit: "merge"}
+    - {algo: "unigram", vocab: 64000, digit: "merge"}

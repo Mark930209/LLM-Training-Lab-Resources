@@ -1,0 +1,136 @@
+# exp_stability 全链路配置 —— 21 篇 Numerical Stability Lab
+#
+# 架构固定 19 篇 modern（rms + pre + swiglu 8/3x + rope + mha，h384），
+# 超参用 17/20 篇基准（lr 3e-4 / b16 / warmup 0.1 / cosine）。
+# 数据底座与 17/18/19/20 篇完全一致（指纹跨篇核对）。
+#
+# 精度实测边界：RTX 3070（Ampere）支持 fp16（需 GradScaler）与 bf16；
+# FP8 无硬件支持（Ada/Hopper 起），只做数值范围分析与 REFERENCE 对照。
+#
+# 结果 JSON 一律 --out 直写 /mnt/d（18 篇教训：WSL /tmp 不可靠）。
+
+corpus:
+  nl_path: "/mnt/d/DocProjects/LearnLLMFromDraft/DevResources/Season1/04/project/exp_scale/data/corpus_large.txt"
+  nl_chunk_chars: 4000
+
+base:
+  layers: 6
+  heads: 6
+  seq_len: 256
+  vocab_expect: 6120
+  arch:                     # 19 篇 modern 五轴，固定不变
+    norm_type: "rms"
+    norm_pos: "pre"
+    ffn_type: "swiglu"
+    pos_enc: "rope"
+    attn_type: "mha"
+
+recipe:
+  name: "nl50_dedup08_q"
+  nl_ratio: 0.5
+  dedup: "minhash08"
+  quality: true
+  char_budget: 1500000
+
+train:
+  hidden: 384
+  batch_size: 16
+  token_budget: 1000000
+  lr: 0.0003
+  weight_decay: 0.1
+  warmup_frac: 0.1
+  decay: "cosine"
+  seed: 20260928
+  device: "cuda"
+
+# ---- 子实验矩阵 ----
+
+# 0. 数值范围演示（纯函数，不训练）：fp32/fp16/bf16/fp8 的表示范围、
+#    fp16 上溢（>65504 → inf）与下溢（<6e-5 → 0）实测、bf16 精度损失实测
+range_demo:
+  enabled: true
+
+# 1. 精度训练对照：fp32 / fp16+GradScaler / bf16 × clip on/off（6 格）
+#    统一报告：最终 loss、两域 ppl、tok/s、峰值显存、loss scale 调整次数（fp16）
+precision:
+  enabled: true
+  dtypes: ["fp32", "fp16", "bf16"]
+  clip: [true, false]
+
+# 2. spike 复现：坏 batch 注入 + LR 放大 + 关 clip（提纲指定的稳定复现场景）
+#    坏 batch = 污染目标 token（模拟脏标签，cross_entropy 真实飙到 ~log(vocab)）。
+#    初版只用 loss×bad_factor 注入失败：记录的 loss 是未放大值 detect_spike 看不到，
+#    且 AdamW 自适应归一化吸收单次梯度放大、fp16 GradScaler 遇 inf 自动跳步——
+#    三重原因导致 spike 三格全 0（实测踩坑，详见 expected_results）。
+#    lr_mult 从 10 降到 5：lr×10 时自然 loss 波动已达 8.79（接近 log(6120)=8.72），
+#    会淹没注入信号且判读困难；lr×5 基线稳定，注入尖峰清晰可辨。
+spike:
+  enabled: true
+  token_budget: 1000000
+  lr_mult: 5.0             # lr 3e-4 → 1.5e-3（20 篇 lr_range 可用区间内，基线稳定）
+  clip: false
+  inject_every: 60         # 每 60 步注入一次坏 batch
+  corrupt_frac: 1.0        # 坏 batch 全部目标 token 替换为随机错误 token（梯度方向最有害）
+  bad_factor: 1.0          # 不再用 loss 放大（对 AdamW 无效），污染目标即够
+  dtypes: ["fp16", "bf16"] # fp32 对照 1 格
+  fp32_control: true
+
+# 3. 指标体系：与 spike 同格采集 grad_norm / update_ratio / loss_scale /
+#    激活范数，逐步写入 JSONL（TensorBoard/W&B 同源数据）
+metrics:
+  enabled: true
+  log_every: 1             # 每步记录（spike 定位需要步级分辨率）
+
+# 4. 告警阈值：grad_norm 前置指标的首次超阈步 vs loss 实际 spike 步 → 提前量
+#    实测剖面（spike 冒烟）：坏 batch grad_norm 是基线中位的 4.8~7.7×，
+#    正常步（除初始化瞬态）最大 ~2×；grad_norm_k=4 零漏检零误报。
+#    基线窗口前 50 步含初始化瞬态（gn 7.6/6.2/5.4...），阈值用中位数鲁棒，
+#    但报警扫描须跳过该窗口（first_alarm_step 的 skip 参数）。
+alarm:
+  enabled: true
+  grad_norm_k: 4.0         # 阈值 = 基线窗口 grad_norm 中位数 × k
+  window: 50
+
+# 4b. 渐进失稳（告警提前量的正样本）：LR 从安全值线性攀升到失稳值。
+#     脏数据注入让 loss 与 grad_norm 同步飙升（lead≈0），验证不了"grad_norm
+#     提前留下征兆"；LR 攀升时 grad_norm 先逐步爬升（前兆）、若干步后 loss
+#     才爆炸（后果），lead 显著为正。lr_to 取 20 篇 lr_range 实测发散区（>1e-2）。
+lr_ramp:
+  enabled: true
+  token_budget: 1000000
+  lr_from: 0.0003          # 安全值（17/19/20 篇基准）
+  lr_to: 0.15              # 失稳值（冒烟：0.02/0.05 下 bf16/fp32 不发散、fp16 突发溢出无 grad_norm 前兆；0.15 触发梯度爆炸型渐进失稳）
+  start_frac: 0.2          # 20% 步数后开始攀升（前段留稳定基线窗口）
+  clip: false
+  dtypes: ["fp16", "bf16", "fp32"]
+
+# 5. 处置策略对照（同一 spike 场景，统一对照）
+#    no_action 是对照组（检测到 spike 但不处置，即"直接续训"）：
+#    提纲必需失败案例"spike 后直接续训导致不可恢复"的实证载体。
+#    clip 默认关（与 spike 场景一致），损伤真实发生，处置才能分化；
+#    tighten_clip 策略在检测到 spike 后才把 clip 开到 0.1。
+recovery:
+  enabled: true
+  token_budget: 1500000
+  clip: false
+  strategies:
+    - "no_action"          # 对照组：检测到也不处置，直接续训
+    - "skip_bad"           # 检测 spike（loss > 阈值）跳过该 batch 不更新
+    - "lower_lr"           # 检测后 LR ×0.5 续训
+    - "rollback_rewarmup"  # 回退最近 checkpoint + 重新 warmup
+    - "tighten_clip"       # clip 阈值开到 0.1
+  ckpt_every: 40           # rollback 策略的 checkpoint 间隔（步）
+  spike_detect_k: 2.5      # loss > 前 window 步中位数 × k 判 spike（实测：自然波动最大 1.97×，坏 batch 最小 2.67×，2.5 干净分离）
+
+# 6. 静默退化：记忆化子集——从某步起只用小子集数据训练，
+#    train loss 快速下降（曲线"更好看"），留出评测 ppl 持续上升
+#    首跑失败（silent_degradation=False，gap=-17.64%）：10% 子集（150K token）
+#    对 h384 模型太大，366 步内记不住，切换后 eval ppl 仍在降（欠拟合主导）。
+#    修法：子集缩到 1%（15K token ≈ 4 个 batch，百步级可背完）+ 切换点推到
+#    50%（留 183 步给记忆化发生）。
+silent:
+  enabled: true
+  token_budget: 1500000
+  memorize_start_frac: 0.5   # 50% 步数后切换到记忆化子集
+  subset_frac: 0.01          # 1% 数据子集（15K token）
+  eval_every: 20             # 每 20 步评一次留出 ppl（画退化曲线，切换点前后都要密）

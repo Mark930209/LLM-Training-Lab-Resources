@@ -132,8 +132,10 @@ def ring_all_reduce(tensor: torch.Tensor, trace: TraceLog | None = None) -> torc
 def reduce_scatter_ring(tensor: torch.Tensor, trace: TraceLog | None = None) -> torch.Tensor:
     """只做 Ring 的阶段一。返回本 rank 负责的那份完整 chunk（1/w 大小）。
 
-    DDP 的梯度同步在 bucket 化后实际用的就是这个原语：
-    各 rank 交换后各持有一份不同的"归约好的分片"。
+    分片梯度训练（ZeRO/FSDP 类）在归约后让每个 rank 只保留不同的梯度分片，
+    用的就是这个原语。注意：普通 DDP 的梯度同步是 all_reduce，
+    backward 后各 rank 都持有完整梯度，不能把 Ring 的中间阶段
+    当成普通 DDP 的最终数据布局。
     """
     world = dist.get_world_size()
     chunks = list(tensor.chunk(world, dim=0))

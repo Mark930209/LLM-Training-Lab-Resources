@@ -25,8 +25,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import os
+import re
 from pathlib import Path
 
 import torch
@@ -68,7 +70,10 @@ def build_mini_eval() -> list[dict]:
         ("三国演义里赤壁之战的胜者是", ["孙刘联军", "曹军", "袁绍", "董卓"], 0),
         ("西游记里白龙马的原型是", ["西海龙王之子", "东海龙王之子", "天马", "妖怪"], 0),
     ]
-    for prompt, options, ans in categories:
+    for idx, (prompt, options, ans) in enumerate(categories):
+        shift = idx % len(options)
+        options = options[shift:] + options[:shift]
+        ans = (ans - shift) % len(options)
         samples.append({"task": "classification", "prompt": prompt,
                         "options": options, "answer": ans})
 
@@ -111,50 +116,105 @@ def build_mini_eval() -> list[dict]:
     return samples
 
 
+def evaluation_set_sha256(samples: list[dict]) -> str:
+    canonical = json.dumps(
+        samples, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
 # ---------------------------------------------------------------- 判分
 
 @torch.no_grad()
-def score_likelihood(model, tokenizer, sample: dict, device: str) -> int:
+def predict_likelihood(model, tokenizer, sample: dict, device: str) -> dict:
     """likelihood 判分：对每个选项算 P(option | prompt)，取最高。
 
     确定性：无采样，同 checkpoint 同输入必同结果。
     只适用于 classification（有固定选项）。
     """
     prompt_ids = tokenizer.encode(sample["prompt"])
+    if not prompt_ids:
+        return 0
     best_idx, best_lp = None, -math.inf
     for i, opt in enumerate(sample["options"]):
         opt_ids = tokenizer.encode(opt)
+        if not opt_ids:
+            continue
         ids = torch.tensor([prompt_ids + opt_ids], device=device)
         if ids.shape[1] < 2:
             continue
         logits = model(ids)
         logits = logits.logits if hasattr(logits, "logits") else logits
-        # 只对 option 部分算 logprob
         log_probs = torch.log_softmax(logits[0, :-1].float(), dim=-1)
-        tgt = ids[0, 1:]
-        lp = log_probs[torch.arange(len(tgt)), tgt].sum().item()
-        lp /= max(1, len(opt_ids))  # 长度归一：否则长选项天然吃亏
+        option_start = len(prompt_ids) - 1
+        option_end = len(prompt_ids) + len(opt_ids) - 1
+        option_log_probs = log_probs[option_start:option_end]
+        option_targets = ids[0, 1:][option_start:option_end]
+        if len(option_targets) != len(opt_ids):
+            continue
+        lp = option_log_probs[
+            torch.arange(len(option_targets), device=device), option_targets
+        ].sum().item()
+        lp /= len(opt_ids)
         if lp > best_lp:
             best_lp, best_idx = lp, i
-    return 1 if best_idx == sample["answer"] else 0
+    return {
+        "prediction": best_idx,
+        "expected": sample["answer"],
+        "correct": int(best_idx == sample["answer"]),
+    }
+
+
+def score_likelihood(model, tokenizer, sample: dict, device: str) -> int:
+    return predict_likelihood(model, tokenizer, sample, device)["correct"]
 
 
 @torch.no_grad()
-def score_generation(model, tokenizer, sample: dict, device: str,
-                     max_new: int = 16, seed: int = 42) -> int:
-    """generation 判分：生成后字符串匹配。采样 seed 必须固定。
+def predict_generation(model, tokenizer, sample: dict, device: str,
+                       max_new: int = 16, seed: int = 42) -> dict:
+    """generation 判分：分类输出选项标签，文本任务按答案前缀核对。
 
     SuperMiniGPT.generate 只有 temperature/top_k 采样参数（03 篇实现），
     与 HF generate 的 do_sample/top_p 不同——判分口径必须写清用的是哪个。
     """
+    prompt = sample["prompt"]
+    expected = sample.get("expected", "")
+    if sample.get("task") == "classification":
+        labels = [chr(ord("A") + i) for i in range(len(sample["options"]))]
+        choices = "\n".join(
+            f"{label}. {option}" for label, option in zip(labels, sample["options"])
+        )
+        prompt = f"{prompt}\n{choices}\n只输出选项字母。"
+        expected = labels[sample["answer"]]
+
+    if not expected:
+        return {"prediction": None, "expected": expected,
+            "raw_output": "", "correct": 0}
     torch.manual_seed(seed)
-    ids = torch.tensor([tokenizer.encode(sample["prompt"])], device=device)
+    ids = torch.tensor([tokenizer.encode(prompt)], device=device)
     out = model.generate(ids, max_new_tokens=max_new, temperature=0.8, top_k=20)
     text = tokenizer.decode(out[0][ids.shape[1]:].tolist())
-    expected = sample.get("expected", "")
-    if not expected:
-        return 0
-    return 1 if expected[:4] in text else 0
+    if sample.get("task") == "classification":
+        prediction = text.lstrip()[:1].upper()
+        correct = int(prediction == expected)
+    elif sample.get("task") == "arithmetic":
+        match = re.match(r"^\s*([+-]?\d+)", text)
+        prediction = match.group(1) if match is not None else None
+        correct = int(prediction == expected)
+    else:
+        normalized_text = re.sub(r"\s+", "", text)
+        normalized_expected = re.sub(r"\s+", "", expected)
+        prediction = normalized_text
+        correct = int(normalized_text.startswith(normalized_expected))
+    return {"prediction": prediction, "expected": expected,
+            "raw_output": text, "correct": correct}
+
+
+def score_generation(model, tokenizer, sample: dict, device: str,
+                     max_new: int = 16, seed: int = 42) -> int:
+    return predict_generation(
+        model, tokenizer, sample, device, max_new=max_new, seed=seed
+    )["correct"]
 
 
 # ---------------------------------------------------------------- 污染扫描
@@ -165,20 +225,32 @@ def ngram_contamination(samples: list[dict], corpus_text: str, n: int = 8) -> di
     中文按字符切 n-gram（本系列 char 分词）。
     返回每条样本的命中情况与总体命中率。
     """
+    if n < 1:
+        raise ValueError("n must be a positive integer")
+
     corpus_ngrams = set()
     for i in range(len(corpus_text) - n + 1):
         corpus_ngrams.add(corpus_text[i:i + n])
 
     hits = []
+    scannable = []
     for idx, s in enumerate(samples):
         prompt = s["prompt"]
-        p_ngrams = [prompt[i:i + n] for i in range(max(1, len(prompt) - n + 1))]
+        can_scan = len(prompt) >= n
+        p_ngrams = [prompt[i:i + n] for i in range(len(prompt) - n + 1)] if can_scan else []
         hit_count = sum(1 for g in p_ngrams if g in corpus_ngrams)
-        hits.append({"idx": idx, "task": s["task"], "prompt": prompt,
-                     "hit_ngrams": hit_count, "total_ngrams": len(p_ngrams),
-                     "contaminated": hit_count > 0})
-    rate = sum(1 for h in hits if h["contaminated"]) / len(hits)
-    return {"n": n, "contamination_rate": rate, "samples": hits}
+        sample_result = {"idx": idx, "task": s["task"], "prompt": prompt,
+                         "scannable": can_scan, "hit_ngrams": hit_count,
+                         "total_ngrams": len(p_ngrams),
+                         "contaminated": hit_count > 0}
+        hits.append(sample_result)
+        if can_scan:
+            scannable.append(sample_result)
+    rate = (sum(1 for h in scannable if h["contaminated"]) / len(scannable)
+            if scannable else 0.0)
+    return {"n": n, "contamination_rate": rate,
+            "n_scannable": len(scannable),
+            "n_unscannable": len(hits) - len(scannable), "samples": hits}
 
 
 # ---------------------------------------------------------------- 报告

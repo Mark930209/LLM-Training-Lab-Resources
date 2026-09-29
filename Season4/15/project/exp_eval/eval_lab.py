@@ -12,13 +12,19 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
+import platform
 import statistics
+import time
+from pathlib import Path
 
 import torch
 
-from .eval_common import (build_mini_eval, ngram_contamination,
-                          score_generation, score_likelihood, write_report)
+from .eval_common import (build_mini_eval, evaluation_set_sha256,
+                          ngram_contamination, predict_generation,
+                          predict_likelihood, score_generation, write_report)
 
 
 def load_model_and_tokenizer(ckpt: str | None, device: str):
@@ -63,24 +69,123 @@ def load_model_and_tokenizer(ckpt: str | None, device: str):
 
 def mode_caliber(args) -> dict:
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+    total_started = time.perf_counter()
+    load_started = total_started
     model, tok = load_model_and_tokenizer(args.ckpt, device)
+    if device == "cuda":
+        torch.cuda.synchronize()
+    model_loaded = time.perf_counter()
     samples = build_mini_eval()
 
     results = {}
+    question_results = []
+    scoring_started = time.perf_counter()
     # likelihood 判分（只对 classification 有效）
-    cls = [s for s in samples if s["task"] == "classification"]
-    acc = sum(score_likelihood(model, tok, s, device) for s in cls) / len(cls)
+    cls = [(idx, sample) for idx, sample in enumerate(samples)
+           if sample["task"] == "classification"]
+    likelihood_results = []
+    for idx, sample in cls:
+        outcome = predict_likelihood(model, tok, sample, device)
+        likelihood_results.append(outcome)
+        question_results.append({
+            "sample_index": idx,
+            "task": sample["task"],
+            "scoring": "likelihood",
+            "prompt": sample["prompt"],
+            "options": sample["options"],
+            **outcome,
+        })
+    acc = sum(item["correct"] for item in likelihood_results) / len(cls)
     results["classification_likelihood"] = {"acc": acc, "n": len(cls)}
 
     # generation 判分（全部任务），seed 固定
     for task in ["classification", "completion", "arithmetic"]:
-        subset = [s for s in samples if s["task"] == task]
+        subset = [(idx, sample) for idx, sample in enumerate(samples)
+                  if sample["task"] == task]
         if not subset:
             continue
-        acc = sum(score_generation(model, tok, s, device, seed=42) for s in subset) / len(subset)
+        outcomes = []
+        for idx, sample in subset:
+            outcome = predict_generation(model, tok, sample, device, seed=42)
+            outcomes.append(outcome)
+            question_results.append({
+                "sample_index": idx,
+                "task": sample["task"],
+                "scoring": "generation",
+                "prompt": sample["prompt"],
+                "options": sample.get("options"),
+                **outcome,
+            })
+        acc = sum(item["correct"] for item in outcomes) / len(subset)
         results[f"{task}_generation"] = {"acc": acc, "n": len(subset), "seed": 42}
 
+    if device == "cuda":
+        torch.cuda.synchronize()
+    finished = time.perf_counter()
+    peak_memory_mib = {
+        "allocated": round(torch.cuda.max_memory_allocated() / (1024 ** 2), 1),
+        "reserved": round(torch.cuda.max_memory_reserved() / (1024 ** 2), 1),
+    } if device == "cuda" else {"allocated": None, "reserved": None}
+    code_files = [Path(__file__), Path(__file__).with_name("eval_common.py")]
+    tokenizer_source = next(
+        (Path(candidate).name for candidate in [
+            "exp_scale/data/corpus_large.txt", "exp_scale/data/corpus_small.txt"
+        ] if os.path.exists(candidate)),
+        None,
+    )
+    tokenizer_vocab = getattr(tok, "stoi", None)
+    tokenizer_vocab_sha256 = None
+    if tokenizer_vocab is not None:
+        vocab_bytes = json.dumps(
+            sorted(tokenizer_vocab.items(), key=lambda item: item[1]),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        tokenizer_vocab_sha256 = hashlib.sha256(vocab_bytes).hexdigest()
+    hardware = torch.cuda.get_device_name(0) if device == "cuda" else "CPU"
     payload = {"mode": "caliber", "ckpt": args.ckpt, "results": results,
+               "metadata": {
+                   "model_parameters": sum(parameter.numel() for parameter in model.parameters()),
+                   "tokenizer": {
+                       "class": type(tok).__name__,
+                       "source": tokenizer_source,
+                       "vocab_size": getattr(tok, "vocab_size", None),
+                       "vocab_sha256": tokenizer_vocab_sha256,
+                   },
+                   "evaluation_set": {
+                       "sha256": evaluation_set_sha256(samples),
+                       "rows": len(samples),
+                       "shots": 0,
+                   },
+                   "scoring": {
+                       "likelihood": "mean conditional log-probability per encoded option token; out-of-vocabulary characters are skipped",
+                       "generation": {
+                           "max_new_tokens": 16,
+                           "temperature": 0.8,
+                           "top_k": 20,
+                           "seed": 42,
+                       },
+                   },
+                   "hardware": {
+                       "device": hardware,
+                       "pytorch": str(torch.__version__),
+                       "cuda_runtime": torch.version.cuda,
+                       "python": platform.python_version(),
+                   },
+                   "peak_memory_mib": peak_memory_mib,
+                   "timing_seconds": {
+                       "model_and_tokenizer_load": round(model_loaded - load_started, 3),
+                       "scoring": round(finished - scoring_started, 3),
+                       "total": round(finished - total_started, 3),
+                   },
+                   "code_sha256": {
+                       path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                       for path in code_files
+                   },
+               },
+               "question_results": question_results,
                "note": "同一 checkpoint，两种判分方式。分数不同是口径不同，不是模型不同。"}
     print(json.dumps(results, ensure_ascii=False, indent=1))
     return payload
@@ -101,12 +206,16 @@ def mode_variance(args) -> dict:
             accs.append(acc)
         mean = statistics.mean(accs)
         std = statistics.stdev(accs) if len(accs) > 1 else 0.0
-        per_task[task] = {"accs": accs, "mean": mean, "std": std,
-                          "ci95": [mean - 1.96 * std, mean + 1.96 * std]}
+        per_task[task] = {
+            "accs": accs,
+            "mean": mean,
+            "std": std,
+            "seed_range": [min(accs), max(accs)],
+        }
 
     payload = {"mode": "variance", "ckpt": args.ckpt, "seeds": seeds,
                "per_task": per_task,
-               "note": "generation 判分受采样影响，必须报方差；likelihood 判分确定性、方差为 0。"}
+               "note": "多 seed 结果描述固定评测集上的生成波动，不是总体置信区间；likelihood 判分确定性。"}
     print(json.dumps({k: {kk: vv for kk, vv in v.items() if kk != "accs"}
                       for k, v in per_task.items()}, ensure_ascii=False, indent=1))
     return payload
@@ -128,23 +237,30 @@ def mode_contamination(args) -> dict:
                "contamination_rate": result["contamination_rate"],
                "n_contaminated": sum(1 for h in result["samples"] if h["contaminated"]),
                "n_total": len(samples),
+               "n_scannable": result["n_scannable"],
+               "n_unscannable": result["n_unscannable"],
                "hits": [h for h in result["samples"] if h["contaminated"]][:20]}
     print(f"污染率: {result['contamination_rate']:.1%} "
-          f"({payload['n_contaminated']}/{len(samples)})")
+          f"({payload['n_contaminated']}/{result['n_scannable']} 可扫描；"
+          f"{result['n_unscannable']} 条短样本无法判定)")
     return payload
 
 
 def mode_report(args) -> dict:
     fields = {
-        "model": "checkpoint 路径与参数量",
-        "tokenizer": "词表来源与版本",
-        "eval_set": "评测集版本哈希与条数",
+        "model": "checkpoint 相对路径与精确参数量",
+        "tokenizer": "tokenizer 类、来源文件名、词表大小与 token→ID 映射 SHA-256",
+        "eval_set": "规范化 JSON 的 SHA-256 与题数",
         "shots": "few-shot 数量与示例来源",
         "scoring": "likelihood / generation（含采样参数与 seed）",
         "seeds": "重复次数",
-        "metrics": "各任务正确率、均值、标准差、置信区间",
+        "metrics": "各任务正确数/题数与准确率；多 seed 报均值、样本标准差和观测范围，不作为总体置信区间",
+        "question_results": "逐题索引、任务、prompt/options、预测、标准答案、正确性与 generation 原始输出",
         "contamination": "n-gram 扫描的 n 与命中率",
-        "hardware": "GPU 型号与单次评测耗时",
+        "hardware": "GPU 型号、PyTorch/CUDA 与 Python 版本",
+        "peak_memory": "CUDA 峰值 allocated/reserved 显存（MiB）；CPU 运行时为 null",
+        "timing": "模型/Tokenizer 加载、评分和总耗时",
+        "evaluation_code": "eval_lab.py 与 eval_common.py 的 SHA-256",
     }
     payload = {"mode": "report", "fields": fields,
                "note": "缺任何一项，分数不可比。这是 15 篇之后所有评测报告的强制格式。"}

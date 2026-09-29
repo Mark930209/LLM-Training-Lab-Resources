@@ -1,0 +1,70 @@
+# exp_data 全链路配置 —— 16 篇 Data Pipeline Lab
+#
+# 换硬件/换语料只改这里，不改代码。
+# 当前已接线的阶段：source、extract（首个增量）。
+# 其余阶段（quality/dedup/shard/tokenize/manifest）为后续增量预留，
+# 键位先固定，避免之后改 schema。
+
+source:
+  base_url: "https://data.commoncrawl.org"
+  index_url: "https://index.commoncrawl.org/CC-MAIN-2024-10-index"
+  query_url: "commoncrawl.org"     # 用于从 CDX 解析一个真实分段
+  segment: null                    # null = 从 CDX 解析；也可填完整分段路径
+  max_bytes: 41943040              # 每个流最多取 40 MB（HTTP Range）
+  max_records: 200                 # 每个流最多解析 200 条记录
+  timeout_sec: 60
+
+extract:
+  # wet            = Common Crawl 官方 WET 已抽取文本（直用）
+  # trafilatura    = 从 WARC 的 HTML 用 trafilatura 抽主正文（含 boilerplate 去除）
+  # naive_visible  = 从 HTML 朴素去标签（未过滤基线，近似"什么都不做"）
+  methods: ["wet", "trafilatura", "naive_visible"]
+
+quality:
+  min_chars: 200
+  max_symbol_ratio: 0.30
+  max_repeat_line_ratio: 0.30
+
+langid:
+  target_langs: ["en", "zh-cn", "zh-tw"]
+  min_prob: 0.80
+  min_chars_for_detect: 40
+
+# filter 模式：采样 → 抽取（用 extract_method）→ 质量过滤 → 语种识别，
+# 逐阶段报告留存率，体现"阶段口径对齐"。
+filter:
+  extract_method: "trafilatura"
+
+dedup:
+  exact: true
+  minhash:
+    num_perm: 128
+    thresholds: [0.5, 0.8, 0.95]
+
+# dedup_scale 模式：合成分布规模扫描（SIMULATED），复现超线性代价与分桶倾斜
+# uniform=均匀基线；skewed=近重复组同桶但早判重（验证仍线性）；
+# moderate=共享基底使 Jaccard 落在阈值下方（同桶碰撞但不判重，验证随规模平方增长）
+dedup_scale:
+  sizes: [500, 1000, 2000]
+  distributions: ["uniform", "skewed", "moderate"]
+  doc_chars: 600
+  skew_ratio: 0.3
+  shared_frac: 0.80
+  threshold: 0.8
+  seed: 20260924
+
+shard:
+  format: "parquet"                # parquet | webdataset
+  rows_per_shard: 1000
+
+tokenize:
+  workers: 8
+  eos_between_docs: true
+  seq_len: 256          # boundary_audit 的窗口长度
+  audit_probes: 20      # boundary_audit 抽查窗口数
+
+pii:
+  keep_samples: 5       # 命中上下文样本数（审计用，不进语料）
+
+manifest:
+  record_stage_retention: true

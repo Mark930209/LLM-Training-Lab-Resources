@@ -1,0 +1,33 @@
+# exp_recipe 全链路配置 —— 17 篇 Data Recipe Lab
+#
+# 公平对照口径：固定 token 预算、固定 tokenizer、固定评测集、固定 seed。
+# 配方矩阵 = 领域配比 × 去重强度 × 质量过滤。
+
+corpus:
+  nl_path: "/mnt/d/DocProjects/LearnLLMFromDraft/DevResources/Season1/04/project/exp_scale/data/corpus_large.txt"
+  nl_chunk_chars: 4000        # 小说训练池按段落切成文档块的粒度
+  inject_duplicates: true      # 注入精确/扰动副本，让去重有作用对象
+
+train:
+  hidden: 384
+  layers: 6
+  heads: 6
+  seq_len: 256
+  batch_size: 16
+  token_budget: 2000000       # 每个配方训练相同的 token 数（约 488 步）
+  lr: 0.0003
+  weight_decay: 0.1
+  warmup_frac: 0.1
+  seed: 20260924
+  device: "cuda"
+
+# 配方矩阵：每个配方 = (nl_ratio, dedup, quality)
+# nl_ratio 是自然语言域字符占比，code = 1 - nl_ratio
+recipes:
+  - {name: "nl80_dedup08_q",  nl_ratio: 0.8, dedup: "minhash08", quality: true,  char_budget: 1500000}
+  - {name: "nl50_dedup08_q",  nl_ratio: 0.5, dedup: "minhash08", quality: true,  char_budget: 1500000}
+  - {name: "code80_dedup08_q", nl_ratio: 0.2, dedup: "minhash08", quality: true, char_budget: 1500000}
+  - {name: "nl50_nodedup_q",  nl_ratio: 0.5, dedup: "none",      quality: true,  char_budget: 1500000}
+  - {name: "nl50_exact_q",    nl_ratio: 0.5, dedup: "exact",     quality: true,  char_budget: 1500000}
+  - {name: "nl50_dedup05_q",  nl_ratio: 0.5, dedup: "minhash05", quality: true,  char_budget: 1500000}  # 过激档（失败案例一）
+  - {name: "nl50_dedup08_noq", nl_ratio: 0.5, dedup: "minhash08", quality: false, char_budget: 1500000}

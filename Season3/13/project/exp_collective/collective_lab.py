@@ -4,7 +4,7 @@
   correctness : 手写 naive / ring / reduce_scatter+all_gather 与 dist.all_reduce 逐位对照
   trace      : ring 的逐轮 trace（每 rank 记录发送字节，核对 2(w-1)/w）
   backend    : gloo vs nccl 的 latency/带宽 sweep（message size 1MB~256MB）
-  ddp_grad   : 把 12 篇 DDP 的真实梯度 bucket 送入手写 ring，核对理论通信量
+  ddp_grad   : 跑一步真实 DDP backward，按参数字节核对理论通信量（bucket 按 25 MiB 上限估算，不读取运行时 bucket）
 
 用法（gloo 单机 2-rank，13 篇主实验）：
   torchrun --nproc_per_node=2 -m exp_collective.collective_lab --mode correctness
@@ -152,6 +152,7 @@ def mode_backend(args) -> dict:
         rows.append({
             "size_mb": mb, "impl": f"dist.all_reduce({args.backend})",
             "ms_median": stats["ms_median"], "ms_p95": stats["ms_p95"],
+            "iters": stats["iters"],
             "algbw_gbps": bandwidth_gbps(algo_bytes, stats["ms_median"]),
             "busbw_gbps": bandwidth_gbps(bus_bytes, stats["ms_median"]),
         })
@@ -169,6 +170,7 @@ def mode_backend(args) -> dict:
             rows.append({
                 "size_mb": mb, "impl": "hand_written_ring(gloo)",
                 "ms_median": stats["ms_median"], "ms_p95": stats["ms_p95"],
+                "iters": stats["iters"],
                 "algbw_gbps": bandwidth_gbps(algo_bytes, stats["ms_median"]),
                 "busbw_gbps": bandwidth_gbps(bus_bytes, stats["ms_median"]),
             })
@@ -185,9 +187,11 @@ def mode_ddp_grad(args) -> dict:
     """把 12 篇 DDP 的真实梯度送进通信量核算。
 
     用 12 篇同款 build_llama（12.93M 参数）跑一步 DDP backward，
-    从 DDP 的 bucket 里读出真实通信量，与理论值（参数字节 × 2(w-1)/w）对账。
+    以参数字节 × 2(w-1)/w 计算理论通信量。bucket 字节按 25 MiB 上限切段估算，
+    脚本没有读取 DDP 运行时的真实 bucket 布局，也没有采集通信重叠证据。
     """
     rank, _, world = setup_dist("gloo")
+    torch.manual_seed(1234 + rank)
     from exp_ddp.ddp_common import FixedSampleDataset, build_model, load_corpus_ids  # noqa: E402
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -223,7 +227,7 @@ def mode_ddp_grad(args) -> dict:
         "n_buckets": n_buckets,
         "bucket_bytes": bucket_bytes,
         "loss": loss.item(),
-        "note": "DDP 梯度按 bucket 分批 all-reduce；bucket 化让通信与反向重叠成为可能（14 篇实测）",
+        "note": "DDP 梯度按 bucket 分批 all-reduce；bucket 化为通信与反向重叠提供可能，本脚本未读取运行时 bucket，也未采集重叠证据；bucket_bytes 按 25 MiB 上限估算",
     }
     print(f"[rank{rank}] params={params_bytes/4/1e6:.2f}M theory_bus={theory_bus/1e6:.1f}MB "
           f"buckets={n_buckets} loss={loss.item():.4f}")

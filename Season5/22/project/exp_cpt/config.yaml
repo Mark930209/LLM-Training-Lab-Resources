@@ -1,0 +1,89 @@
+# exp_cpt 全链路配置 —— 22 篇 Continual Pretraining Lab
+#
+# 底座：Qwen/Qwen2.5-0.5B（Apache 2.0，494M 参数，Qwen2ForCausalLM：
+# hidden 896 / 24 层 / 14 头 / GQA 2 KV 头 / vocab 151936（tokenizer 151643，
+# 293 行余量可用于扩词表）/ tied embedding / RoPE theta 1e6）。
+# 全系列唯一用真实开源底座的篇目。
+#
+# 数据映射（复用 17 篇数据底座，指纹跨篇核对）：
+#   领域 = code_train（代码文档），通用 = nl_train（中文散文），
+#   领域评测 = code_eval（24 docs），通用评测 = nl_eval（200K 字符）。
+#   replay = 把通用语料按比例混回领域数据（0%/5%/20%/50%）。
+#
+# 显存实测（探针，RTX 3070 8GB，bf16 全参数 AdamW）：
+#   bs=2 seq=512：6337 MiB / 1340 tok/s（采用）
+#   bs=4 seq=512：9783 MiB 超 8GB（WSL 溢出，tps 掉到 408，禁用）
+# 结果 JSON 一律 --out 直写 /mnt/d（18 篇教训：WSL /tmp 不可靠）。
+# 路径均相对本目录（exp_cpt/）解析，不写绝对本地路径。
+
+base_model:
+  path: "../../model/Qwen2.5-0.5B"
+  dtype: "bf16"            # 21 篇结论：bf16 范围同 fp32 无需 scaler，质量等价
+  license: "Apache-2.0"
+  vocab_size: 151936
+  tokenizer_size: 151643   # 293 行余量
+
+corpus:
+  nl_path: "../../../../Season1/04/project/exp_scale/data/corpus_large.txt"
+  nl_chunk_chars: 4000
+
+train:
+  batch_size: 2
+  seq_len: 512
+  token_budget: 200000     # 每格 CPT 预算（~195 步，探针 1340 tok/s ≈ 150 s/格）
+  weight_decay: 0.1
+  grad_clip: 1.0           # 21 篇结论：clip 是质量必需（关 clip 劣化 18.5%）
+  eval_every: 40           # 每 40 步双评测（画遗忘曲线）
+  eval_max_tokens: 6000    # 评测子采样上限（200K 字符 eval 集全量太慢）
+  seed: 20260929
+  device: "cuda"
+  diverge_thresh: 20.0
+
+# 0. 基线：底座 0 步的通用/领域起点（不训练，只评测）
+baseline:
+  enabled: true
+
+# 1. 核心矩阵：LR 峰值 × replay 比例（核心判断的两个自变量）
+#    LR 3 档含明显过大的一档（1e-4 是 Qwen 底座常规 CPT LR 的 ~3 倍+）；
+#    replay 4 档覆盖 0%（纯领域，遗忘最快）到 50%（强回放）。
+core:
+  enabled: true
+  lr_peaks: [0.00001, 0.00003, 0.0001]
+  replay_ratios: [0.0, 0.05, 0.2, 0.5]
+  rewarm: true             # 核心矩阵统一带 re-warmup（探针 §rewarm 单独关）
+  expand_vocab: false      # 核心矩阵不扩词表（探针 §vocab 单独开）
+
+# 2. re-warmup 必要性对照（固定 lr=3e-5, replay=0.2，核心格已含 rewarm=true，
+#    这里只补 rewarm=false 一格）
+rewarm_probe:
+  enabled: true
+  lr: 0.00003
+  replay_ratio: 0.2
+
+# 3. 扩词表与 embedding 初始化对照（固定 lr=3e-5, replay=0.2）
+#    领域 token = 代码语料高频 n-gram（从 code_train 提取 top-N 不在词表的片段），
+#    占用底座 293 行词表余量。三种初始化：random / mean / subword_avg
+#    （新 token 文本切成旧子词，取子词 embedding 均值——18 篇方法）。
+vocab_probe:
+  enabled: true
+  lr: 0.00003
+  replay_ratio: 0.2
+  n_new_tokens: 256        # 余量 293 内
+  init_methods: ["random", "mean", "subword_avg"]
+
+# 4. 失败案例（提纲硬要求）：LR 过大擦除底座知识
+#    lr=1e-3（常规 CPT 的 30 倍）+ replay=0.2 训到通用评测崩；
+#    然后两种恢复：降 LR 续训 / 回退 checkpoint 重训。
+failure:
+  enabled: true
+  lr: 0.001
+  replay_ratio: 0.2
+  recover_lr: 0.00003      # 降 LR 恢复档
+  # 冒烟实测：lr=1e-3 在 ~5 步内发散（loss 5.95→42），间隔 50 步的 ckpt
+  # 永远等不到；改 2 步存一次（train_cpt 内封顶 6 个，防未发散时内存爆）
+  checkpoint_every: 2
+
+# 两段式学习率：re-warmup（前 rewarm_frac 线性升到峰值）+ cosine 衰减到 floor
+schedule:
+  rewarm_frac: 0.05
+  decay_floor_frac: 0.1    # 衰减终值 = peak × 0.1（不归零，CPT 惯例）
