@@ -124,8 +124,13 @@ def main():
             dist.send(warm, rank - 1)
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
-    wall_pp, loss_pp = timed_run(lambda: run_pp(stage, xs, gcoef,
-                                                args.schedule, tl, p2p))
+
+    def _run_and_flush():
+        out = run_pp(stage, xs, gcoef, args.schedule, tl, p2p)
+        p2p.flush()          # 等完在途发送才算一步结束
+        return out
+
+    wall_pp, loss_pp = timed_run(_run_and_flush)
     peak_pp = (torch.cuda.max_memory_allocated() >> 20
                if torch.cuda.is_available() else 0)
     pp_grads = {n: p.grad.detach().clone() for n, p in stack.named_parameters()

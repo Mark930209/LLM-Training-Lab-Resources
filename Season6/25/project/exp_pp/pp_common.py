@@ -93,16 +93,25 @@ def theoretical_bubble(stages: int, micro: int) -> float:
 
 @dataclass
 class P2PBytes:
-    """send/recv 通信账（激活与梯度）。"""
+    """send/recv 通信账（激活与梯度）。
+
+    发送用 isend 异步语义：阻塞 send 在 1F1B 交错下会与对端的发送形成
+    circular wait（4-stage SCALED 实测 600s 死锁，EXIT=124），异步发送
+    让本端继续走到 recv，收发才配得上对。
+    """
 
     send_bytes: int = 0
     recv_bytes: int = 0
     n_send: int = 0
     n_recv: int = 0
+    _handles: list = field(default_factory=list)
 
     def send(self, t: torch.Tensor, dst: int, tl: Timeline, mb: int) -> None:
         with tl.span("send", mb):
-            dist.send(t.contiguous(), dst)
+            buf = t.contiguous()
+            self._handles.append(dist.isend(buf, dst))
+            if len(self._handles) > 2:      # 限制在途深度，防缓冲膨胀
+                self._handles.pop(0).wait()
         self.send_bytes += t.numel() * t.element_size()
         self.n_send += 1
 
@@ -113,6 +122,11 @@ class P2PBytes:
         self.recv_bytes += buf.numel() * buf.element_size()
         self.n_recv += 1
         return buf
+
+    def flush(self) -> None:
+        """等完所有在途发送（run 结束时调用，计入壁钟）。"""
+        while self._handles:
+            self._handles.pop(0).wait()
 
     def summary(self) -> dict:
         return {"send_bytes": self.send_bytes, "recv_bytes": self.recv_bytes,
